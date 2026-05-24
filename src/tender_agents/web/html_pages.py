@@ -815,6 +815,83 @@ def leads_page(*, backend: str, count: int, q: str, source_options: str, rows: s
     )
 
 
+def import_excel_section() -> str:
+    return """
+  <div class="card">
+    <h2>Импорт из Excel / CSV</h2>
+    <p class="hint">Загрузите файл (.xlsx, .csv) до 5МБ. Мы предложим сопоставить колонки.</p>
+    <form method="post" action="/contacts/import/upload" enctype="multipart/form-data">
+      <label>Выберите файл</label>
+      <input type="file" name="file" accept=".xlsx,.csv" required/>
+      <label class="chk">
+        <input type="checkbox" name="use_yandex" value="1"/>
+        Использовать Yandex для сопоставления колонок (экспериментально)
+      </label>
+      <p style="margin-top:1rem"><button type="submit">Загрузить и настроить маппинг</button></p>
+    </form>
+  </div>
+"""
+
+
+def import_mapping_page(
+    filename: str,
+    headers: list[str],
+    sample_rows: list[dict],
+    suggested_mapping: dict[str, str],
+) -> str:
+    from tender_agents.excel_ingest.excel_import import MAPPING_FIELDS
+
+    rows_html = ""
+    for row in sample_rows[:10]:
+        cells = "".join(f"<td>{_e(str(v or ''))}</td>" for v in row.values())
+        rows_html += f"<tr>{cells}</tr>"
+
+    header_th = "".join(f"<th>{_e(h)}</th>" for h in headers)
+
+    mapping_rows = ""
+    for field, keywords in MAPPING_FIELDS.items():
+        options = '<option value="">-- Пропустить --</option>'
+        selected_h = suggested_mapping.get(field, "")
+        for h in headers:
+            sel = " selected" if h == selected_h else ""
+            options += f'<option value="{_e(h)}"{sel}>{_e(h)}</option>'
+
+        mapping_rows += f"""
+        <tr>
+          <td><strong>{_e(field)}</strong><br><span class="hint">{_e(", ".join(keywords[:3]))}</span></td>
+          <td><select name="map_{_e(field)}">{options}</select></td>
+        </tr>"""
+
+    body = f"""
+  <h1>Настройка импорта: {_e(filename)}</h1>
+  <p class="meta">Проверьте, правильно ли определены колонки. Мы показали первые 10 строк для примера.</p>
+
+  <div class="card" style="overflow-x:auto">
+    <h3>Превью данных</h3>
+    <table class="dense">
+      <thead><tr>{header_th}</tr></thead>
+      <tbody>{rows_html}</tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <form method="post" action="/contacts/import/commit">
+      <input type="hidden" name="filename" value="{_e(filename)}"/>
+      <h3>Сопоставление полей</h3>
+      <table>
+        <thead><tr><th>Поле в базе</th><th>Колонка в файле</th></tr></thead>
+        <tbody>{mapping_rows}</tbody>
+      </table>
+      <p style="margin-top:1.5rem">
+        <button type="submit">Начать импорт</button>
+        <a href="/settings?tab=channels" class="btn secondary">Отмена</a>
+      </p>
+    </form>
+  </div>
+"""
+    return _layout("Маппинг импорта", "contacts", body)
+
+
 def channels_settings_section(cfg: dict) -> str:
     ch = cfg.get("channels") or {}
     bookmarks = ch.get("bookmarks") or []
@@ -1030,6 +1107,9 @@ def settings_page(cfg: dict, *, flash: str = "", tab: str = "project") -> str:
     </form>
   </div>
 
-  <div class="card {_panel_visible(tab, 'channels')}">{channels_html}</div>
+  <div class="card {_panel_visible(tab, 'channels')}">
+    {import_excel_section()}
+    {channels_html}
+  </div>
 """
     return _layout("Настройки", nav_active, body, flash=flash)

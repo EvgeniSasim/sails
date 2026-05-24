@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote, urlencode
 
-from fastapi import BackgroundTasks, FastAPI, Form, Query
+from fastapi import BackgroundTasks, FastAPI, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 from tender_agents.contacts_db import ContactListFilters
@@ -760,6 +760,86 @@ async def api_leads(limit: int = 100, min_score: int = 0):
     flt = LeadFilters(min_score=min_score)
     leads = await repo.list_filtered(flt, limit=limit)
     return [lead.model_dump() for lead in leads]
+
+
+@app.post("/contacts/import/upload")
+async def contacts_import_upload(
+    file: UploadFile,
+    use_yandex: Annotated[str | None, Form()] = None,
+):
+    import uuid
+    from tender_agents.excel_ingest.excel_import import parse_workbook, suggest_mapping
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        return RedirectResponse("/settings?tab=channels&err=File+too+large+(max+5MB)", status_code=303)
+
+    orig_fn = file.filename or "import.xlsx"
+    # Безопасное имя файла для хранения
+    safe_fn = str(uuid.uuid4()) + Path(orig_fn).suffix
+
+    import_dir = Path("data/imports")
+    import_dir.mkdir(parents=True, exist_ok=True)
+
+    # Сохраняем временно
+    tmp_path = import_dir / safe_fn
+    tmp_path.write_bytes(content)
+
+    try:
+        rows = parse_workbook(content, orig_fn)
+        if not rows:
+            return RedirectResponse("/settings?tab=channels&err=No+data+found+in+file", status_code=303)
+
+        headers = list(rows[0].keys())
+        mapping = await suggest_mapping(headers, rows, use_yandex=bool(use_yandex))
+
+        from tender_agents.web.html_pages import import_mapping_page
+        return HTMLResponse(import_mapping_page(safe_fn, headers, rows[:10], mapping))
+    except Exception as e:
+        logger.exception("Import upload failed")
+        return RedirectResponse(f"/settings?tab=channels&err={quote(str(e)[:200])}", status_code=303)
+
+
+@app.post("/contacts/import/commit")
+async def contacts_import_commit(
+    request: Request,
+    filename: Annotated[str, Form()],
+):
+    from tender_agents.excel_ingest.excel_import import MAPPING_FIELDS, apply_mapping, parse_workbook
+
+    # Валидация filename (должен быть просто именем файла без путей)
+    if "/" in filename or "\\" in filename:
+        return RedirectResponse("/settings?tab=channels&err=Invalid+filename", status_code=303)
+
+    form_data = await request.form()
+    mapping = {}
+    for field in MAPPING_FIELDS:
+        val = form_data.get(f"map_{field}")
+        if val:
+            mapping[field] = str(val)
+
+    import_dir = Path("data/imports")
+    tmp_path = import_dir / filename
+    if not tmp_path.exists():
+        return RedirectResponse("/settings?tab=channels&err=Temp+file+lost", status_code=303)
+
+    try:
+        content = tmp_path.read_bytes()
+        rows = parse_workbook(content, filename)
+        profiles, appearances = apply_mapping(rows, mapping)
+
+        repo = create_repository()
+        await repo.init()
+        n = await repo.contacts_repo().upsert_contacts_batch(profiles, appearances)
+
+        # Чистим
+        tmp_path.unlink()
+
+        msg = quote(f"Импорт завершен: добавлено / обновлено {n} контактов.")
+        return RedirectResponse(f"/contacts?flash={msg}", status_code=303)
+    except Exception as e:
+        logger.exception("Import commit failed")
+        return RedirectResponse(f"/settings?tab=channels&err={quote(str(e)[:200])}", status_code=303)
 
 
 @app.get("/api/export")
