@@ -479,6 +479,10 @@ _QUAL_RU = {"fresh": "≤1 г", "aging": "1–2 г", "stale": ">2 г", "partial"
 
 _APPEARANCE_KIND_RU = {
     "kommersant_open": "Рейтинг / СМИ",
+    "hr_ratings": "HR-рейтинг",
+    "ai_open_media": "ИИ (любой сайт)",
+    "listing_catalog": "Каталог (список)",
+    "open_media": "Открытый источник",
     "web_mention": "Упоминание в сети",
     "web_contact": "Контакты компании",
     "web_speech": "Выступление",
@@ -947,10 +951,10 @@ def channels_settings_section(cfg: dict) -> str:
   <div class="settings-section">
     <h2>Импорт по URL (СМИ / рейтинги)</h2>
     <p class="hint"><strong>Закладки:</strong> в <code>config/channels.yaml</code> у URL должно быть <code>enabled: true</code>, иначе кнопка «все включённые» их пропускает. Импорт попадает в раздел «Контакты».</p>
-    <p class="hint">Сейчас: <strong>kommersant.ru/doc/…</strong> с таблицей (ФИО / должность / компания). Если по сети «ничего не находит», сохраните страницу в браузере и в терминале: <code>tender-leads open ingest «URL» --html-file файл.html</code></p>
+    <p class="hint"><strong>Любой URL</strong> (новости, саммиты, рейтинги): YandexGPT извлекает людей; <strong>каталоги</strong> (globalmsk и др.) — HTML-парсер обходит <strong>все страницы пагинации</strong> (offset/page). Дубликаты по ФИО+компания дополняют карточку. <a href="/settings?tab=apis">Yandex API</a> для статей без списка ссылок. Playwright при 403. Офлайн: <code>--html-file</code> (одна страница).</p>
     <form method="post" action="/settings/channels-ingest">
       <label>URL материала</label>
-      <input name="page_url" type="url" required placeholder="https://www.kommersant.ru/doc/7180193"/>
+      <input name="page_url" type="url" required placeholder="https://hrsummit.ru/hrclubnews/… или любой материал с ФИО"/>
       <label>Макс. записей (0 = все)</label>
       <input type="number" name="limit" value="0" min="0" max="500"/>
       <label class="chk"><input type="checkbox" name="dry_run"/> Только проверка (в БД не писать)</label>

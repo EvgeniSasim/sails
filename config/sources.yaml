@@ -16,6 +16,6 @@ sources:
     search_url: https://www.sberbank-ast.ru/UnitedPurchaseList.aspx
   zakupki:
     base_url: https://zakupki.gov.ru
-    enabled: false
+    enabled: true
     name: ЕИС zakupki.gov.ru
     search_url: https://zakupki.gov.ru/epz/order/extendedsearch/results.html

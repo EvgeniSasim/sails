@@ -413,6 +413,10 @@ class ContactRepository:
                 src_title = (lead.context_title or lead.title or "").strip()
                 snippet = (c.source_snippet or lead.description_snippet or "")[:800]
 
+                raw = lead.raw_extract if isinstance(lead.raw_extract, dict) else {}
+                bio_new = (raw.get("bio") or lead.description_snippet or "").strip()
+                source_kind = str(raw.get("channel_kind") or "open_media")[:64]
+
                 r = await session.execute(select(ContactProfileRow).where(ContactProfileRow.dedup_key == dk))
                 prof = r.scalar_one_or_none()
                 if prof:
@@ -420,12 +424,28 @@ class ContactRepository:
                         prof.email = (c.email or "").strip()
                     if (c.phone or "").strip():
                         prof.phone = (c.phone or "").strip()
-                    if (c.role or "").strip():
-                        prof.position = (c.role or "").strip()
+                    new_role = (c.role or "").strip()
+                    if new_role:
+                        old_role = (prof.position or "").strip()
+                        if not old_role or len(new_role) > len(old_role):
+                            prof.position = new_role[:512]
                     if (c.linkedin_search_url or "").strip():
                         prof.linkedin_search_url = (c.linkedin_search_url or "").strip()
                     if (c.yandex_search_url or "").strip():
                         prof.yandex_search_url = (c.yandex_search_url or "").strip()
+                    if bio_new:
+                        prev_bio = (prof.bio or "").strip()
+                        if not prev_bio:
+                            prof.bio = bio_new[:8000]
+                        elif bio_new not in prev_bio:
+                            prof.bio = (prev_bio + "\n\n---\n" + bio_new)[:8000]
+                    note_line = snippet[:500] if snippet else ""
+                    if note_line:
+                        prev_notes = (prof.notes or "").strip()
+                        if note_line not in prev_notes:
+                            prof.notes = (
+                                (prev_notes + "\n" + note_line).strip() if prev_notes else note_line
+                            )[:4000]
                     fs = _as_utc(prof.first_seen_at)
                     prof.first_seen_at = min(fs, appeared) if fs else appeared
                 else:
@@ -442,7 +462,8 @@ class ContactRepository:
                         telegram=None,
                         vk=None,
                         social_json=None,
-                        notes=None,
+                        notes=(snippet[:4000] if snippet else None),
+                        bio=bio_new[:8000] if bio_new else None,
                         first_seen_at=appeared,
                         last_seen_at=appeared,
                         appearance_count=0,
@@ -461,10 +482,11 @@ class ContactRepository:
                         ContactAppearanceRow(
                             profile_id=prof.id,
                             appeared_at=appeared,
-                            source_kind="kommersant_open",
+                            source_kind=source_kind,
                             source_url=src_url,
                             source_title=src_title or None,
                             snippet=snippet or None,
+                            appearance_type="rating",
                         )
                     )
                     prof.appearance_count = (prof.appearance_count or 0) + 1
