@@ -686,9 +686,16 @@ async def contacts_import_commit(
         if val:
             mapping[field] = str(val)
 
-    import_dir = Path("data/imports")
-    tmp_path = import_dir / filename
-    if not tmp_path.exists():
+    import_dir = (Path("data/imports")).resolve()
+    import_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        tmp_path = (import_dir / Path(filename).name).resolve()
+    except (OSError, ValueError):
+        return RedirectResponse(
+            "/settings?tab=channels&flash=" + quote("ERR:некорректное имя файла"),
+            status_code=303,
+        )
+    if tmp_path.parent != import_dir or not tmp_path.is_file():
         return RedirectResponse(
             "/settings?tab=channels&flash=" + quote("ERR:временный файл не найден"),
             status_code=303,

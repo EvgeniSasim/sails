@@ -6,7 +6,7 @@
 |---|--------|------------|--------|
 | 1 | zakupki-resilience | — | **400 FAILED_PRECONDITION** (лимит/конфликт; повторить вручную) |
 | 2 | research-captcha-compliance | `11039565428354772031` | создана |
-| 3 | excel-import | `875956085978133483` | создана |
+| 3 | excel-import | `875956085978133483` | влито в `main` (`excel_ingest`, PR #1 закрыт); fix path traversal — `b295ae6` ≈ наш UUID + resolve |
 
 Повтор задачи 1:
 
