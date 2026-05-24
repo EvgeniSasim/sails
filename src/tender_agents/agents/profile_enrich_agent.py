@@ -33,16 +33,32 @@ PHONE_RE = re.compile(
     r"(?:\+7|8)[\s\-]?\(?9\d{2}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}"
 )
 
-_DDG_JUNK_MARKERS = (
+_BLOCKED_MARKERS = (
     "error-lite@duckduckgo.com",
     "duckduckgo.com/lite",
     "anomaly-modal",
+    "showcaptcha",
+    "checkbox-captcha",
+    "captcha",
+    "not a robot",
+    "подтвердите, что запросы",
 )
 
 
 def _is_search_engine_error_page(html: str) -> bool:
     low = (html or "").lower()
-    return any(m in low for m in _DDG_JUNK_MARKERS)
+    if len(html) < 2500 and "captcha" in low:
+        return True
+    return any(m in low for m in _BLOCKED_MARKERS)
+
+
+def _serp_looks_usable(html: str) -> bool:
+    if not html or _is_search_engine_error_page(html):
+        return False
+    if "linkedin.com/in" in html.lower():
+        return True
+    soup = BeautifulSoup(html, "lxml")
+    return bool(soup.select("a.result__a, .OrganicTitle, a.OrganicTitle-Link, .result__snippet"))
 
 
 def _serp_text(html: str) -> str:
@@ -131,35 +147,33 @@ async def enrich_contact_from_web(
     """Собрать кандидатов linkedin / email / phone из HTML выдачи (ничего не пишет в БД)."""
     out: dict[str, str | None] = {}
     q = f"{full_name} {organization} linkedin".strip()
+    q_contact = f"{full_name} {organization} контакт email".strip()
     urls: list[str] = []
     if (yandex_search_url or "").strip():
         urls.append(yandex_search_url.strip())
-    urls.append(f"https://html.duckduckgo.com/html/?q={quote_plus(q)}")
+    urls.extend(
+        [
+            f"https://search.brave.com/search?q={quote_plus(q)}",
+            f"https://yandex.ru/search/?text={quote_plus(q_contact)}&lr=213",
+            f"https://html.duckduckgo.com/html/?q={quote_plus(q)}",
+            f"https://lite.duckduckgo.com/lite/?q={quote_plus(q)}",
+        ]
+    )
 
     html = ""
-    last_err: Exception | None = None
     for u in urls:
         try:
-            html = await fetch_search_html(u)
-            if _is_search_engine_error_page(html) and "yandex" not in u.lower():
-                logger.info("skip junk search page: %s", u[:80])
+            page = await fetch_search_html(u)
+            if not _serp_looks_usable(page):
+                logger.info("enrich: skip blocked/empty SERP (%s)", u[:70])
                 continue
-            if "linkedin.com/in" in html.lower():
-                break
-            soup = BeautifulSoup(html, "lxml")
-            if soup.select("a.result__a") or soup.select(".OrganicTitle"):
-                break
+            html = page
+            break
         except Exception as e:
-            last_err = e
-            logger.debug("search fetch failed %s: %s", u, e)
+            logger.debug("enrich search fetch failed %s: %s", u[:70], e)
             continue
-    if not html or _is_search_engine_error_page(html):
-        if last_err:
-            raise last_err
-        raise ValueError(
-            "Поиск вернул служебную страницу (DuckDuckGo/блокировка). "
-            "Откройте ссылку «Яндекс» в карточке вручную или повторите позже."
-        )
+    if not html:
+        return out
 
     serp = _serp_text(html)
     li = pick_linkedin_url(html, full_name)
@@ -188,7 +202,10 @@ async def enrich_contact_profile(repo, profile_id: int) -> dict[str, str | None]
     if not found:
         await cr.apply_contact_enrichment(
             profile_id,
-            notes_append="[enrich] в сниппетах выдачи нет проверенных e-mail/тел./LinkedIn",
+            notes_append=(
+                "[enrich] в выдаче нет проверенных e-mail/тел./LinkedIn "
+                "(поисковики могли отдать капчу — откройте «Исследовать в сети» на карточке)"
+            ),
         )
         return found
     note_bits = [k for k in found if found[k]]
@@ -208,13 +225,18 @@ async def enrich_contacts_batch(repo, *, limit: int = 12) -> int:
     cr = repo.contacts_repo()
     profiles = await cr.list_profiles_needing_enrichment(limit)
     n = 0
+    empty = 0
     for p in profiles:
         if not p.id:
             continue
         try:
-            await enrich_contact_profile(repo, p.id)
+            found = await enrich_contact_profile(repo, p.id)
             n += 1
+            if not found:
+                empty += 1
         except Exception:
             logger.exception("enrich profile %s", p.id)
         await asyncio.sleep(0.85)
+    if empty:
+        logger.info("enrich batch: processed=%s, без новых полей=%s (часто капча у поисковиков)", n, empty)
     return n

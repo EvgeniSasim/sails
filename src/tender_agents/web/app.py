@@ -10,7 +10,7 @@ from typing import Annotated
 from urllib.parse import quote, urlencode
 
 from fastapi import BackgroundTasks, FastAPI, File, Form, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 
 from tender_agents.contacts_db import ContactListFilters
 from tender_agents.db import LeadFilters, create_repository
@@ -33,6 +33,11 @@ from tender_agents.web.html_pages import (
 logger = logging.getLogger(__name__)
 app = FastAPI(title="FeedBackTalk Tender Leads", version="0.3.0")
 store = ConfigStore()
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse, include_in_schema=False)
+async def robots_txt() -> str:
+    return "User-agent: *\nDisallow:\n"
 
 
 def _contacts_url_with_flash(return_query: str, flash: str) -> str:
@@ -508,14 +513,26 @@ async def contact_research_post(contact_id: int, background_tasks: BackgroundTas
     )
 
 
-@app.get("/contact/{contact_id}/research/status", response_class=PlainTextResponse)
-async def contact_research_status(contact_id: int):
+@app.get("/contact/{contact_id}/research/status")
+async def contact_research_status(contact_id: int, format: str = Query("json")):
     repo = create_repository()
     await repo.init()
     job = await repo.research_jobs().latest_for_profile(contact_id)
     if not job:
-        return PlainTextResponse("no job")
-    return PlainTextResponse(f"{job.status}|{job.error or ''}")
+        payload = {"status": "none"}
+    else:
+        payload = {
+            "job_id": job.id,
+            "status": job.status,
+            "error": job.error,
+            "challenge_url": job.challenge_url,
+            "search_engine": job.search_engine,
+        }
+    if format == "text":
+        if payload.get("status") == "none":
+            return PlainTextResponse("no job")
+        return PlainTextResponse(f"{payload['status']}|{payload.get('error') or ''}")
+    return JSONResponse(payload)
 
 
 @app.post("/contact/research/{job_id}/resume")
