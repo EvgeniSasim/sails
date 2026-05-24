@@ -92,6 +92,18 @@ table.dense td, table.dense th { vertical-align: top; }
 .toolbar-actions form { display: inline; }
 .toolbar-actions button { width: auto; }
 .link-stats { font-size: 0.8rem; color: #8b9cb3; margin: 0.25rem 0 0.5rem; }
+.faq-toc { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.35rem 1.5rem; margin: 0 0 1.25rem; font-size: 0.9rem; }
+.faq-section { scroll-margin-top: 0.75rem; margin-top: 1.5rem; }
+details.faq { background: #1a2332; border: 1px solid #2a3544; border-radius: 8px; padding: 0.65rem 1rem; margin-bottom: 0.5rem; }
+details.faq summary { cursor: pointer; color: #e7ecf3; font-weight: 500; list-style: none; }
+details.faq summary::-webkit-details-marker { display: none; }
+details.faq summary::before { content: "▸ "; color: #6eb5ff; }
+details.faq[open] summary::before { content: "▾ "; }
+details.faq[open] summary { color: #6eb5ff; margin-bottom: 0.45rem; }
+.faq-a { font-size: 0.9rem; line-height: 1.55; color: #b8c5d9; }
+.faq-a ul, .faq-a ol { margin: 0.35rem 0 0.5rem; padding-left: 1.25rem; }
+.faq-a li { margin: 0.2rem 0; }
+.faq-a code { font-size: 0.85em; }
 """
 
 
@@ -107,6 +119,7 @@ def _nav(active: str) -> str:
         ("analytics", "/analytics", "Аналитика"),
         ("analyst", "/analyst", "История"),
         ("channels", "/settings?tab=channels", "Импорт СМИ"),
+        ("help", "/help", "Справка"),
         ("settings", "/settings", "Настройки"),
     ]
     return "\n    ".join(
@@ -296,7 +309,9 @@ def queue_page(
     <a href="/settings?tab=run" class="btn secondary">Сбор</a>
   </div>
   <p class="hint">Поиск и лимит применяются в БД до сортировки. Дедлайн — по календарю (дд.мм.гггг). Фильтр «Только тендеры» / «Все записи» — если в БД остались старые смешанные строки.{" Показано: <strong>" + str(filtered_count) + "</strong>." if filtered_count else ""}</p>
-  <p><a href="/queue" class="btn secondary">Очередь менеджера</a> <a href="/research/jobs" class="btn secondary">Капча / задачи</a></p>
+  <p><a href="/queue" class="btn secondary">Очередь менеджера</a>
+    <a href="/help" class="btn secondary">Справка</a>
+    <a href="/research/jobs" class="btn secondary">Капча / задачи</a></p>
   <table>
     <thead>{headers}</thead>
     <tbody>{rows}</tbody>
@@ -1197,7 +1212,7 @@ def settings_page(
 
     body = f"""
   <h1>Настройки</h1>
-  <p class="meta">Файлы: config/*.yaml, секреты в .env</p>
+  <p class="meta">Файлы: config/*.yaml, секреты в .env · <a href="/help">Вопросы и ответы для менеджера</a></p>
   <p class="hint" style="background:#422006;padding:0.5rem 0.75rem;border-radius:6px;margin-bottom:0.75rem">
     Открывайте дашборд через <a href="/settings?tab={_e(tab)}"><strong>http://111.88.147.92</strong></a> (порт 80).
     Прямой доступ к <code>:8765</code> из интернета может обрывать страницу — это не баг вкладки «Агенты».
@@ -1393,7 +1408,7 @@ def manager_queue_page(*, tab: str, hot_leads: list, contacts: list, linked_rows
     )
     body = f"""
   <h1>Очередь менеджера</h1>
-  <p class="meta"><a href="/">← Тендеры</a> · <a href="/contacts">Контакты</a></p>
+  <p class="meta"><a href="/">← Тендеры</a> · <a href="/contacts">Контакты</a> · <a href="/help">Справка</a></p>
   <div class="card"><h2>Горячие тендеры (≥60, 30 дней)</h2>
     <table class="dense"><thead><tr><th>Скор</th><th>Тендер</th><th>Заказчик</th><th>Дедлайн</th></tr></thead>
     <tbody>{hot_rows}</tbody></table></div>
@@ -1483,3 +1498,292 @@ def import_mapping_page(
     </form>
   </div>"""
     return _layout("Маппинг импорта", "contacts", body)
+
+
+def _faq_item(question: str, answer_html: str) -> str:
+    return (
+        f'<details class="faq"><summary>{_e(question)}</summary>'
+        f'<div class="faq-a">{answer_html}</div></details>'
+    )
+
+
+def _faq_section(section_id: str, title: str, items: list[tuple[str, str]]) -> str:
+    blocks = "".join(_faq_item(q, a) for q, a in items)
+    return f'<section id="{section_id}" class="faq-section"><h2>{_e(title)}</h2>{blocks}</section>'
+
+
+def help_page() -> str:
+    toc = """
+  <nav class="faq-toc card" aria-label="Оглавление">
+    <a href="#start">С чего начать</a>
+    <a href="#tenders">Тендеры</a>
+    <a href="#contacts">Контакты и ЛПР</a>
+    <a href="#pipeline">Воронка и аналитика</a>
+    <a href="#settings">Настройки продукта</a>
+    <a href="#import">Импорт СМИ и Excel</a>
+    <a href="#compliance">Перед контактом</a>
+    <a href="#troubles">Частые проблемы</a>
+  </nav>"""
+
+    sections = (
+        _faq_section(
+            "start",
+            "С чего начать (15–30 минут в день)",
+            [
+                (
+                    "Какой типичный рабочий день менеджера?",
+                    """<ol>
+<li><a href="/queue">Очередь менеджера</a> — горячие тендеры (скор ≥60), ЛПР с e-mail, подтверждённые связи.</li>
+<li><a href="/">Тендеры</a> — фильтр «горячие», период 7–30 дней, сортировка по срочности.</li>
+<li>Карточка тендера — скопировать питч FeedBackTalk, сменить этап воронки, подтвердить связь с ЛПР.</li>
+<li><a href="/contacts">Контакты</a> — проверить канал, при необходимости «Исследовать в сети» или пакетное обогащение.</li>
+</ol>
+<p class="hint">ЛПР из СМИ не попадают в список тендеров — только в «Контакты».</p>""",
+                ),
+                (
+                    "Где что искать в меню?",
+                    """<ul>
+<li><strong>Тендеры</strong> — закупки с ЕИС и площадок.</li>
+<li><strong>Контакты</strong> — люди из рейтингов, СМИ, Excel.</li>
+<li><strong>Воронка</strong> — этапы сделок по тендерам.</li>
+<li><strong>Настройки</strong> — ключи, сбор, API, агенты, импорт.</li>
+<li><strong>Справка</strong> (эта страница) — инструкции.</li>
+</ul>""",
+                ),
+                (
+                    "Как открыть дашборд на проде?",
+                    """<p>Используйте адрес через nginx (порт <strong>80</strong>), не <code>:8765</code> снаружи —
+страница может обрываться. Браузер запросит логин и пароль (выдаёт администратор).</p>""",
+                ),
+            ],
+        )
+        + _faq_section(
+            "tenders",
+            "Тендеры и очередь",
+            [
+                (
+                    "Что означает скор и сегмент?",
+                    """<p><strong>Скор</strong> — приоритет закупки для FeedBackTalk (опросы, HR, CX, исследования).
+Чем выше, тем релевантнее предмет и ключевые слова. <span class="score hot">≥60</span> — «горячие».</p>
+<p><strong>Сегменты:</strong> <code>hr</code>, <code>cx</code>, <code>research</code>, <code>gov</code> —
+под них подбирается текст питча в карточке.</p>""",
+                ),
+                (
+                    "Какие фильтры на главной странице?",
+                    """<ul>
+<li><strong>Минимальный скор</strong>, сегмент, площадка, этап воронки.</li>
+<li><strong>Горячие</strong> — только скор ≥60.</li>
+<li><strong>Только текущие ключи</strong> — скрывает старые записи, собранные по другим ключам (не удаляет из БД).</li>
+<li><strong>Даты / 7д / 30д / квартал</strong> — по дате публикации или создания.</li>
+<li><strong>По срочности</strong> — сортировка по дедлайну подачи заявок.</li>
+</ul>""",
+                ),
+                (
+                    "Я сменил ключевые слова — почему старые тендеры остались?",
+                    """<p>Смена в <a href="/settings?tab=keywords">Настройки → Ключи</a> влияет только на
+<strong>следующий сбор</strong>. База не пересчитывается автоматически.</p>
+<ul>
+<li>Включите фильтр «только текущие ключи» на главной.</li>
+<li>Запустите новый сбор: <a href="/settings?tab=run">Настройки → Запуск</a>.</li>
+</ul>""",
+                ),
+                (
+                    "Как работать с карточкой тендера?",
+                    """<ol>
+<li>Откройте тендер из списка → блок <strong>питч</strong> (скопируйте в письмо/КП).</li>
+<li>Контакты с ЕИС — если парсер их нашёл.</li>
+<li><strong>Кандидаты ЛПР</strong> из базы СМИ — «Подтвердить» или «Не тот человек».</li>
+<li>Смените <strong>этап воронки</strong> и добавьте заметки.</li>
+<li>Ссылка ↗ — оригинал на zakupki.gov.ru.</li>
+</ol>
+<p>Из карточки тендера можно открыть <strong>карточку сделки</strong> (объединённый вид тендера и ЛПР).</p>""",
+                ),
+            ],
+        )
+        + _faq_section(
+            "contacts",
+            "Контакты и ЛПР",
+            [
+                (
+                    "Откуда берутся контакты?",
+                    """<ul>
+<li>Импорт URL / закладок СМИ — <a href="/settings?tab=channels">Импорт СМИ</a>.</li>
+<li>Excel / CSV — там же, блок «Импорт из Excel».</li>
+<li>«Исследовать в сети» на карточке — доп. появления (осторожно с капчей).</li>
+<li>«Обогатить профиль» — поиск e-mail/телефона (пакетно до 12 в списке).</li>
+</ul>""",
+                ),
+                (
+                    "Что такое «Описание» и «Мероприятия» на карточке?",
+                    """<p><strong>Описание (bio)</strong> — редактируемый текст о человеке (вручную).</p>
+<p><strong>Мероприятия</strong> — конференции, выступления, рейтинги: дата, тип, название, место, ссылка.
+Можно добавить вручную без Excel.</p>""",
+                ),
+                (
+                    "Кнопка «Канал проверен» — зачем?",
+                    """<p>Перед коммерческим письмом отметьте, что e-mail/телефон проверены вручную.
+В <a href="/queue">очереди</a> видна колонка «Проверен». Подробнее:
+<a href="/help#compliance">перед контактом</a>.</p>""",
+                ),
+                (
+                    "Как связать ЛПР с тендером?",
+                    """<p>Система предлагает связи по похожести названия организации заказчика и компании контакта
+(статус <em>кандидат</em>). В карточке тендера подтвердите или отклоните.</p>
+<p>На странице контактов — «Пересчитать связи с тендерами» после массового импорта.</p>""",
+                ),
+            ],
+        )
+        + _faq_section(
+            "pipeline",
+            "Воронка и аналитика",
+            [
+                (
+                    "Какие этапы воронки?",
+                    """<p><code>new</code> → <code>qualified</code> → <code>proposal</code> → <code>demo</code> →
+<code>won</code> / <code>lost</code>. Смена этапа — в <strong>карточке тендера</strong>, на
+<a href="/pipeline">Воронке</a> — обзор Kanban.</p>""",
+                ),
+                (
+                    "Что показывает аналитика?",
+                    """<p>Сводка по скору, сегментам и этапам только для канала <strong>тендеров</strong>
+(не смешивает ЛПР из СМИ). Экспорт списка — <a href="/api/export">CSV</a> с главной.</p>""",
+                ),
+                (
+                    "Что такое «История» (аналитик)?",
+                    """<p>Раздел <a href="/analyst">История</a> — выгрузка и просмотр истории тендеров для анализа
+(отдельно от операционной очереди).</p>""",
+                ),
+            ],
+        )
+        + _faq_section(
+            "settings",
+            "Настройка продукта (вкладки «Настройки»)",
+            [
+                (
+                    "Проект — что менять?",
+                    """<ul>
+<li><strong>Бэкенд скрапинга</strong> — для ЕИС обычно <code>httpx</code> (стабильнее).</li>
+<li><strong>Провайдер агентов</strong> — <code>local</code> или <code>yandex</code> (нужен API).</li>
+<li><strong>Задержка</strong> — пауза между запросами к площадкам.</li>
+</ul>
+<p><a href="/settings?tab=project">Открыть → Проект</a></p>""",
+                ),
+                (
+                    "API — Yandex и прочее",
+                    """<p>Для YandexGPT: ключ и Folder ID в <a href="/settings?tab=apis">Настройки → API</a>.
+Кнопка «Проверить Yandex» — тест до запуска сбора.</p>
+<p class="hint">Responses API и Web Search для zakupki обычно не нужны — оставьте выключенными.</p>""",
+                ),
+                (
+                    "Площадки — что включать?",
+                    """<p>Для продакшена достаточно <strong>zakupki</strong>. B2B и Сбербанк-АСТ часто недоступны —
+не включайте без проверки сети.</p>
+<p><a href="/settings?tab=sources">Настройки → Площадки</a></p>""",
+                ),
+                (
+                    "Ключевые слова",
+                    """<p>Список в <a href="/settings?tab=keywords">Ключи</a> — по одному слову на строку.
+Опция «добавить keywords_hr / keywords_cx» расширяет охват HR/CX.</p>
+<p>Агент «Сгенерировать ключи из задачи менеджера» — результат во вкладке
+<a href="/settings?tab=jobs">Задачи</a>.</p>""",
+                ),
+                (
+                    "Агенты — что настраивается?",
+                    """<p>Вкладка <a href="/settings?tab=agents">Агенты</a>: лимиты обогащения, исследования,
+таймауты. Меняйте при блокировках поисковиков или медленном сборе.</p>""",
+                ),
+                (
+                    "Как запустить сбор тендеров?",
+                    """<p><a href="/settings?tab=run">Запуск</a> — кнопка сбора (фоновая задача).
+На сервере тот же пайплайн может идти по cron (<code>tender-leads run</code>).</p>
+<p>После сбора обновите <a href="/">Тендеры</a>.</p>""",
+                ),
+                (
+                    "Вкладка «Задачи»",
+                    """<p>Фоновые jobs: сбор, планирование ключей, импорт. Статус и ошибки — в таблице.
+При капче исследования — <a href="/research/jobs">отдельный список</a>.</p>""",
+                ),
+            ],
+        )
+        + _faq_section(
+            "import",
+            "Импорт СМИ и Excel",
+            [
+                (
+                    "Как импортировать статью или рейтинг?",
+                    """<ol>
+<li><a href="/settings?tab=channels">Импорт СМИ</a> → вставьте URL (новость, рейтинг, саммит).</li>
+<li>Для каталогов с пагинацией — парсер обходит страницы.</li>
+<li>Дубликаты по ФИО+компания дополняют карточку.</li>
+</ol>
+<p>Для статей без списка ссылок полезен Yandex API (вкладка API).</p>""",
+                ),
+                (
+                    "Импорт Excel — шаги",
+                    """<ol>
+<li>Загрузите .xlsx или .csv (до 5 МБ).</li>
+<li>Проверьте сопоставление колонок (ФИО, компания, e-mail…).</li>
+<li>«Импортировать» — контакты появятся в <a href="/contacts">Контактах</a>.</li>
+</ol>""",
+                ),
+                (
+                    "Импорт не находит людей",
+                    """<ul>
+<li>Проверьте, что URL открывается и не требует подписки.</li>
+<li>При 403 — на сервере может понадобиться Playwright (настраивает админ).</li>
+<li>Для Yandex-извлечения из текста — ключ API во вкладке API.</li>
+</ul>""",
+                ),
+            ],
+        )
+        + _faq_section(
+            "compliance",
+            "Перед контактом (кратко)",
+            [
+                (
+                    "Можно ли сразу писать на e-mail из парсинга?",
+                    """<p><strong>Нет автоматической рассылки.</strong> Используйте только открытые источники и B2B-логику:
+проверьте канал, подтвердите связь с тендером при необходимости, затем пишите вручную.</p>
+<p>Отметка «Канал проверен» фиксирует, что менеджер проверил данные.</p>""",
+                ),
+            ],
+        )
+        + _faq_section(
+            "troubles",
+            "Частые проблемы",
+            [
+                (
+                    "Страница «Агенты» или настройки не грузится",
+                    """<p>Откройте сайт без <code>:8765</code> — только через основной адрес (nginx, порт 80).
+Вкладка «Агенты» сама по себе не «висит» — обрыв чаще из-за прямого порта приложения.</p>""",
+                ),
+                (
+                    "Мало тендеров после сбора",
+                    """<ul>
+<li>Узкий список ключей — расширьте или включите HR/CX.</li>
+<li>Только zakupki включён — это нормально.</li>
+<li>Смотрите вкладку «Задачи» на ошибки сбора.</li>
+</ul>""",
+                ),
+                (
+                    "Исследование в сети / капча",
+                    """<p>Поисковики могут показать капчу. Задача попадёт в
+<a href="/research/jobs">Капча / задачи</a>. Повторите позже или обогатите вручную.</p>""",
+                ),
+                (
+                    "Кому писать по доработкам?",
+                    """<p>Оператор/аналитик меняет ключи, cron и API. Менеджер — работает с очередью,
+карточками и верификацией каналов. Технический доступ к серверу — у администратора деплоя.</p>""",
+                ),
+            ],
+        )
+    )
+
+    body = f"""
+  <h1>Вопросы и ответы</h1>
+  <p class="meta">Как менеджеру работать с FeedBackTalk Tender Leads и настраивать продукт</p>
+  {toc}
+  {sections}
+  <p class="hint" style="margin-top:2rem">Не нашли ответ? Начните с <a href="/queue">очереди менеджера</a>
+  или напишите администратору, который выдал доступ к дашборду.</p>"""
+    return _layout("Справка", "help", body)

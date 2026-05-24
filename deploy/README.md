@@ -47,13 +47,22 @@ sudo systemctl restart tender-agents
 ssh ts-ai-es 'cd ~/agents && .venv/bin/pip install -e ".[web,excel]" && sudo systemctl restart tender-agents'
 ```
 
-## Проверка
+## Доступ по паролю (nginx)
 
-**Снаружи используйте порт 80 (nginx), не :8765** — прямой 8765 из интернета может обрывать загрузку.
+На проде включён HTTP Basic Auth. Файл паролей только на сервере: `/etc/nginx/.htpasswd-tender-agents`.
 
 ```bash
-curl -sI http://111.88.147.92/
-curl -sI http://111.88.147.92/settings?tab=agents
+# Сменить пароль (на сервере):
+sudo htpasswd /etc/nginx/.htpasswd-tender-agents tehnointel2026
+```
+
+Снаружи заходите только через **http://111.88.147.92/** (порт 80), не `:8765`.
+
+## Проверка
+
+```bash
+curl -sI -u 'tehnointel2026:tehnointel2026' http://111.88.147.92/
+curl -sI http://111.88.147.92/   # без пароля → 401
 ```
 
 Локально на сервере: `curl -sI http://127.0.0.1:8765/`

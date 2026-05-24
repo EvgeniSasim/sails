@@ -28,6 +28,7 @@ from tender_agents.web.html_pages import (
     pipeline_page,
     queue_page,
     platform_job_detail_page,
+    help_page,
     settings_page,
 )
 
@@ -875,6 +876,16 @@ async def tender_link_status(
         )
     ru = "Связь подтверждена" if status == "confirmed" else "Связь снята / отклонена"
     return RedirectResponse(f"/lead/{lead_id}?flash=" + quote(ru), status_code=303)
+
+
+@app.get("/help", response_class=HTMLResponse)
+async def help_faq() -> str:
+    return help_page()
+
+
+@app.get("/faq", include_in_schema=False)
+async def faq_redirect():
+    return RedirectResponse("/help", status_code=301)
 
 
 @app.get("/settings", response_class=HTMLResponse)
