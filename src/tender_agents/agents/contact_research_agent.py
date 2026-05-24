@@ -27,6 +27,8 @@ from tender_agents.text_utils import (
     org_latin_slug,
     person_name_tokens,
 )
+from tender_agents.compliance import record_provenance
+from tender_agents.research.fetchers import HttpxFetcher, ManualCaptchaFetcher, CaptchaException
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +285,9 @@ def _parse_ddg_serp(html: str) -> list[SerpHit]:
     return hits[:MAX_SERP_HITS]
 
 
-async def _fetch_serp_html(url: str) -> str:
+async def _fetch_serp_html(url: str, fetcher=None) -> str:
+    if fetcher:
+        return await fetcher.fetch(url)
     return await fetch_search_html(url)
 
 
@@ -293,6 +297,7 @@ async def collect_serp_hits(
     yandex_search_url: str | None = None,
     organization: str = "",
     full_name: str = "",
+    fetcher=None,
 ) -> tuple[list[SerpHit], str]:
     from urllib.parse import quote_plus
 
@@ -317,7 +322,7 @@ async def collect_serp_hits(
 
     for name, u in engines:
         try:
-            html = await _fetch_serp_html(u)
+            html = await _fetch_serp_html(u, fetcher=fetcher)
             if _is_blocked_serp(html):
                 logger.info("serp blocked (%s): %s", name, u[:70])
                 continue
@@ -480,6 +485,8 @@ async def run_contact_research(
     profile_id: int,
     *,
     max_pages: int = MAX_PAGE_FETCH,
+    job_id: int | None = None,
+    cookies: dict | None = None,
 ) -> ResearchReport:
     cr = repo.contacts_repo()
     p = await cr.get_by_id(profile_id, with_appearances=False)
@@ -488,17 +495,31 @@ async def run_contact_research(
 
     queries = build_research_queries(p.full_name, p.organization, p.position)
     report = ResearchReport(query=queries[0])
+
+    fetcher = ManualCaptchaFetcher(HttpxFetcher(cookies=cookies))
     serp: list[SerpHit] = []
     seen_urls: set[str] = set()
     source_used = ""
 
     for q in queries:
-        batch, src = await collect_serp_hits(
-            q,
-            yandex_search_url=p.yandex_search_url if not serp else None,
-            organization=p.organization,
-            full_name=p.full_name,
-        )
+        try:
+            batch, src = await collect_serp_hits(
+                q,
+                yandex_search_url=p.yandex_search_url if not serp else None,
+                organization=p.organization,
+                full_name=p.full_name,
+                fetcher=fetcher,
+            )
+        except CaptchaException as ce:
+            if job_id:
+                await cr.update_research_job(
+                    job_id,
+                    status="needs_captcha",
+                    search_engine=ce.engine,
+                    challenge_url=ce.url,
+                    instructions="Пожалуйста, пройдите капчу по ссылке и скопируйте cookies или сохраните HTML.",
+                )
+            raise ce
         if src and not source_used:
             source_used = src
         for h in batch:
@@ -540,6 +561,24 @@ async def run_contact_research(
     report.findings_added = result["added"]
     report.findings_skipped = result["skipped"]
     report.channels_updated = result.get("channels") or []
+
+    # Record provenance for new findings
+    for f in findings:
+        meta = f.meta_json or {}
+        for field, key in [("email", "emails"), ("phone", "phones")]:
+            values = meta.get(key) or []
+            for val in values:
+                if field == "email" and not is_plausible_contact_email(val):
+                    continue
+                if field == "phone" and not is_plausible_contact_phone(val):
+                    continue
+                await record_provenance(
+                    repo,
+                    profile_id=profile_id,
+                    source_url=f.source_url,
+                    field=field,
+                    value=val,
+                )
 
     note = (
         f"[research] «{queries[0][:70]}»; источник: {source_used or '—'}; "

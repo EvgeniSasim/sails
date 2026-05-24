@@ -172,6 +172,7 @@ class LeadRepository:
         import tender_agents.contacts_db  # noqa: F401 — регистрация таблиц на Base.metadata
 
         async with self._engine.begin() as conn:
+            # First create all tables defined in models (including new ones in contacts_db)
             await conn.run_sync(Base.metadata.create_all)
             await self._migrate(conn)
         await self.contacts_repo().migrate_appearance_columns()

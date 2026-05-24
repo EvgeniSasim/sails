@@ -716,6 +716,7 @@ def contact_detail_page(p, *, flash: str = "", tender_links: list | None = None)
             f'<div class="card"><h2>Исследование в сети</h2>'
             f"<p class='hint'>Запрос как вручную: «ФИО + компания + контакт email». "
             f"Выдача: Brave → Яндекс → DuckDuckGo; если капча — сайт компании (напр. nanolek.ru/contact) и LinkedIn.</p>"
+            f'<div id="research-status" class="hint" style="margin: 0.5rem 0;">Загрузка статуса...</div>'
             f'<p style="margin-top:0.75rem">'
             f'<form method="post" action="/contact/{p.id}/research" style="display:inline">'
             f'<button type="submit">Исследовать в сети</button></form> '
@@ -724,8 +725,33 @@ def contact_detail_page(p, *, flash: str = "", tender_links: list | None = None)
             f'<form method="post" action="/contact/{p.id}/sanitize-channels" style="display:inline">'
             f'<button type="submit" class="btn secondary">Убрать мусорный e-mail/тел.</button></form>'
             f"</p></div>"
+            f"<script>"
+            f"async function updateStatus() {{"
+            f"  const res = await fetch('/contact/{p.id}/research/status');"
+            f"  const data = await res.json();"
+            f"  const el = document.getElementById('research-status');"
+            f"  if (data.status === 'running') {{"
+            f"    el.innerHTML = '⏳ Исследование запущено...'; setTimeout(updateStatus, 3000);"
+            f"  }} else if (data.status === 'needs_captcha') {{"
+            f"    el.innerHTML = '⚠️ Требуется капча. <a href=\"' + data.challenge_url + '\" target=\"_blank\">Открыть страницу</a><br>' +"
+            f"      '<form method=\"post\" action=\"/contact/research/' + data.job_id + '/resume\" style=\"margin-top:0.5rem\">' +"
+            f"      '<input type=\"text\" name=\"cookies_text\" placeholder=\"Вставьте cookies (опционально)\" style=\"width:200px\"> ' +"
+            f"      '<button type=\"submit\" class=\"btn\">Я прошёл капчу — продолжить</button></form>';"
+            f"  }} else if (data.status === 'completed') {{"
+            f"    el.innerHTML = '✅ Завершено'; "
+            f"  }} else if (data.status === 'failed') {{"
+            f"    el.innerHTML = '❌ Ошибка: ' + data.error;"
+            f"  }} else {{"
+            f"    el.innerHTML = 'Готов к запуску';"
+            f"  }}"
+            f"}}"
+            f"updateStatus();"
+            f"</script>"
         )
     body = f"""
+  <div class="flash ok" style="margin-bottom: 1rem; background: #1e3a5f; border-color: #3b82f6;">
+    🛡️ Данные только из открытых источников. Перед коммерческим предложением подтвердите канал связи.
+  </div>
   <h1>{_e(p.full_name)}</h1>
   <p class="meta">{_e(p.organization)} · {_e(p.position or 'должность не указана')}</p>
   <p>Актуальность данных: <span class="{qcls}"><strong>{_e(_QUAL_RU.get(p.data_quality, p.data_quality))}</strong></span>

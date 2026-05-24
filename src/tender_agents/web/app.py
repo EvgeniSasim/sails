@@ -405,18 +405,136 @@ async def contact_detail_view(contact_id: int, flash: str = Query("")):
 
 
 @app.post("/contact/{contact_id}/research")
-async def contact_research_post(contact_id: int):
+async def contact_research_post(contact_id: int, background_tasks: BackgroundTasks):
     repo = create_repository()
     await repo.init()
-    try:
-        from tender_agents.agents.contact_research_agent import report_summary, run_contact_research
+    cr = repo.contacts_repo()
+    from tender_agents.agents.contact_research_agent import build_research_query
 
-        report = await run_contact_research(repo, contact_id)
-        msg = report_summary(report)
-    except Exception as e:
-        logger.exception("contact research %s", contact_id)
-        msg = "ERR:" + str(e)[:500]
-    return RedirectResponse(f"/contact/{contact_id}?flash=" + quote(msg), status_code=303)
+    p = await cr.get_by_id(contact_id, with_appearances=False)
+    if not p:
+        return RedirectResponse(f"/contacts?flash={quote('ERR:Контакт не найден')}", status_code=303)
+
+    query = build_research_query(p.full_name, p.organization, p.position)
+    job_id = await cr.create_research_job(contact_id, query)
+
+    async def run_job():
+        try:
+            from tender_agents.agents.contact_research_agent import (
+                report_summary,
+                run_contact_research,
+            )
+
+            await cr.update_research_job(job_id, status="running")
+            report = await run_contact_research(repo, contact_id, job_id=job_id)
+            msg = report_summary(report)
+            await cr.update_research_job(
+                job_id, status="completed", result_json={"summary": msg}
+            )
+        except Exception as e:
+            logger.exception("contact research %s", contact_id)
+            if "Captcha" in str(e):
+                # Job status already updated in run_contact_research
+                pass
+            else:
+                await cr.update_research_job(job_id, status="failed", error=str(e))
+
+    background_tasks.add_task(run_job)
+    return RedirectResponse(
+        f"/contact/{contact_id}?flash={quote('Исследование запущено в фоне')}", status_code=303
+    )
+
+
+@app.get("/contact/{contact_id}/research/status")
+async def contact_research_status(contact_id: int):
+    repo = create_repository()
+    await repo.init()
+    cr = repo.contacts_repo()
+    async with repo._session_factory() as session:
+        from sqlalchemy import select
+        from tender_agents.contacts_db import ContactResearchJobRow
+
+        r = await session.execute(
+            select(ContactResearchJobRow)
+            .where(ContactResearchJobRow.profile_id == contact_id)
+            .order_by(ContactResearchJobRow.created_at.desc())
+            .limit(1)
+        )
+        job = r.scalar_one_or_none()
+        if not job:
+            return {"status": "none"}
+        return {
+            "job_id": job.id,
+            "status": job.status,
+            "error": job.error,
+            "challenge_url": job.challenge_url,
+        }
+
+
+@app.post("/contact/research/{job_id}/resume")
+async def contact_research_resume(
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    cookies_text: Annotated[str | None, Form()] = None,
+):
+    repo = create_repository()
+    await repo.init()
+    cr = repo.contacts_repo()
+    job = await cr.get_research_job(job_id)
+    if not job:
+        return RedirectResponse("/contacts", status_code=303)
+
+    cookies = {}
+    if cookies_text:
+        # Basic parsing: name=value; name2=value2
+        for pair in cookies_text.split(";"):
+            if "=" in pair:
+                k, v = pair.strip().split("=", 1)
+                cookies[k] = v
+
+    await cr.update_research_job(job_id, status="pending", error=None)
+
+    async def run_job():
+        try:
+            from tender_agents.agents.contact_research_agent import (
+                report_summary,
+                run_contact_research,
+            )
+
+            await cr.update_research_job(job_id, status="running")
+            report = await run_contact_research(repo, job.profile_id, job_id=job_id, cookies=cookies)
+            msg = report_summary(report)
+            await cr.update_research_job(
+                job_id, status="completed", result_json={"summary": msg}
+            )
+        except Exception as e:
+            logger.exception("contact research resume %s", job.profile_id)
+            if "Captcha" in str(e):
+                pass
+            else:
+                await cr.update_research_job(job_id, status="failed", error=str(e))
+
+    background_tasks.add_task(run_job)
+    return RedirectResponse(
+        f"/contact/{job.profile_id}?flash={quote('Исследование возобновлено')}", status_code=303
+    )
+
+
+@app.get("/research/jobs")
+async def research_jobs_list():
+    repo = create_repository()
+    await repo.init()
+    cr = repo.contacts_repo()
+    jobs = await cr.list_jobs_by_status("needs_captcha")
+    return [
+        {
+            "job_id": j.id,
+            "profile_id": j.profile_id,
+            "query": j.query,
+            "challenge_url": j.challenge_url,
+        }
+        for j in jobs
+    ]
 
 
 @app.post("/contact/{contact_id}/sanitize-channels")

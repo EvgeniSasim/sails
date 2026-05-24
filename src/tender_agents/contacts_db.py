@@ -47,6 +47,47 @@ class ContactProfileRow(Base):
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     appearance_count: Mapped[int] = mapped_column(Integer, default=0)
     last_enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    channel_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class ContactResearchJobRow(Base):
+    __tablename__ = "contact_research_jobs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("contact_profiles.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(32), default="pending", index=True)
+    query: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+    result_json: Mapped[dict | None] = mapped_column(JSON)
+
+    # Captcha info
+    search_engine: Mapped[str | None] = mapped_column(String(32))
+    challenge_url: Mapped[str | None] = mapped_column(Text)
+    screenshot_path: Mapped[str | None] = mapped_column(Text)
+    instructions: Mapped[str | None] = mapped_column(Text)
+
+
+class DataProvenanceLogRow(Base):
+    __tablename__ = "data_provenance_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    profile_id: Mapped[int] = mapped_column(
+        ForeignKey("contact_profiles.id", ondelete="CASCADE"), index=True
+    )
+    source_url: Mapped[str] = mapped_column(Text)
+    field: Mapped[str] = mapped_column(String(64))
+    value: Mapped[str] = mapped_column(Text)
+    collected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
 
 
 class ContactAppearanceRow(Base):
@@ -71,6 +112,10 @@ class ContactAppearanceRow(Base):
 APPEARANCE_MIGRATION_COLUMNS = [
     ("appearance_type", "VARCHAR(32) DEFAULT ''"),
     ("meta_json", "TEXT"),
+]
+
+CONTACT_PROFILE_MIGRATION_COLUMNS = [
+    ("channel_verified_at", "DATETIME"),
 ]
 
 
@@ -213,12 +258,18 @@ class ContactRepository:
 
     async def migrate_appearance_columns(self) -> None:
         async with self._engine.begin() as conn:
+
             def run(sync_conn):
                 for col, ddl in APPEARANCE_MIGRATION_COLUMNS:
                     try:
                         sync_conn.execute(
                             text(f"ALTER TABLE contact_appearances ADD COLUMN {col} {ddl}")
                         )
+                    except Exception:
+                        pass
+                for col, ddl in CONTACT_PROFILE_MIGRATION_COLUMNS:
+                    try:
+                        sync_conn.execute(text(f"ALTER TABLE contact_profiles ADD COLUMN {col} {ddl}"))
                     except Exception:
                         pass
 
@@ -678,6 +729,55 @@ class ContactRepository:
             if cleared:
                 await session.commit()
         return cleared
+
+    async def create_research_job(self, profile_id: int, query: str) -> int:
+        async with self._session_factory() as session:
+            job = ContactResearchJobRow(profile_id=profile_id, query=query, status="pending")
+            session.add(job)
+            await session.commit()
+            await session.refresh(job)
+            return job.id
+
+    async def get_research_job(self, job_id: int) -> ContactResearchJobRow | None:
+        async with self._session_factory() as session:
+            return await session.get(ContactResearchJobRow, job_id)
+
+    async def update_research_job(self, job_id: int, **kwargs) -> None:
+        async with self._session_factory() as session:
+            job = await session.get(ContactResearchJobRow, job_id)
+            if job:
+                for k, v in kwargs.items():
+                    setattr(job, k, v)
+                await session.commit()
+
+    async def list_jobs_by_status(self, status: str) -> list[ContactResearchJobRow]:
+        async with self._session_factory() as session:
+            r = await session.execute(
+                select(ContactResearchJobRow)
+                .where(ContactResearchJobRow.status == status)
+                .order_by(ContactResearchJobRow.created_at.desc())
+            )
+            return list(r.scalars().all())
+
+    async def log_provenance(
+        self,
+        profile_id: int,
+        source_url: str,
+        field: str,
+        value: str,
+        collected_at: datetime,
+    ) -> None:
+        async with self._session_factory() as session:
+            session.add(
+                DataProvenanceLogRow(
+                    profile_id=profile_id,
+                    source_url=source_url,
+                    field=field,
+                    value=value,
+                    collected_at=collected_at,
+                )
+            )
+            await session.commit()
 
     async def apply_contact_enrichment(
         self,
