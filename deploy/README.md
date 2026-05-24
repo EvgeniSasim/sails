@@ -49,9 +49,13 @@ ssh ts-ai-es 'cd ~/agents && .venv/bin/pip install -e ".[web,excel]" && sudo sys
 
 ## Проверка
 
+**Снаружи используйте порт 80 (nginx), не :8765** — прямой 8765 из интернета может обрывать загрузку.
+
 ```bash
-curl -sI http://111.88.147.92:8765/
 curl -sI http://111.88.147.92/
+curl -sI http://111.88.147.92/settings?tab=agents
 ```
+
+Локально на сервере: `curl -sI http://127.0.0.1:8765/`
 
 После reboot: `ssh ts-ai-es 'systemctl is-active tender-agents'`

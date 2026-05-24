@@ -1198,6 +1198,10 @@ def settings_page(
     body = f"""
   <h1>Настройки</h1>
   <p class="meta">Файлы: config/*.yaml, секреты в .env</p>
+  <p class="hint" style="background:#422006;padding:0.5rem 0.75rem;border-radius:6px;margin-bottom:0.75rem">
+    Открывайте дашборд через <a href="/settings?tab={_e(tab)}"><strong>http://111.88.147.92</strong></a> (порт 80).
+    Прямой доступ к <code>:8765</code> из интернета может обрывать страницу — это не баг вкладки «Агенты».
+  </p>
   <div class="tabs">{tabs}</div>
 
   <div class="card {_panel_visible(tab, 'project')}">
