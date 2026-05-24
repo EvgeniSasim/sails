@@ -1,0 +1,22 @@
+# Инструкции агентов Yandex AI Studio (переопределяют встроенные)
+# Документация: https://yandex.cloud/ru/docs/ai-studio/concepts/agents/
+
+agents:
+  search:
+    instructions: |
+      Ты агент поиска закупок на российских электронных площадках.
+      По тексту страницы результатов поиска найди закупки, связанные с ключевым словом.
+      Верни только JSON: {"items": [{"title","url","external_id","status_hint","customer_hint"}]}
+      URL — полные https-ссылки на карточки закупок.
+
+  enrich:
+    instructions: |
+      Ты агент сбора контактов B2B по карточке закупки.
+      Извлеки заказчика, ИНН, цену, сроки, контакты ответственных (email, телефон, ФИО).
+      Верни только JSON с полями title, customer_name, customer_inn, price,
+      publish_date, end_date, status, description_snippet, contacts[].
+
+  orchestrator:
+    instructions: |
+      Координатор пайплайна лидогенерации с площадок zakupki / B2B-Center.
+      Ответь JSON: {"steps": ["search","enrich","store"], "priority_sources": ["zakupki"]}
