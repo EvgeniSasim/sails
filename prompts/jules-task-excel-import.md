@@ -19,7 +19,7 @@ Settings → tab "Импорт" or Contacts toolbar:
 
 ## Implementation
 - Dependency: `openpyxl` optional extra `pip install -e ".[excel]"` in pyproject.toml
-- `src/tender_agents/import/excel_import.py`:
+- `src/tender_agents/excel_ingest/excel_import.py`:
   - `parse_workbook(bytes) -> list[dict[str, Any]]`
   - `suggest_mapping(headers, sample_rows) -> dict` using YandexStudioClient if configured else fuzzy match Russian headers (ФИО, компания, должность, email, телефон)
   - `apply_mapping(rows, mapping) -> list[ContactProfile]`

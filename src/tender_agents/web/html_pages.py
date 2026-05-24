@@ -662,11 +662,7 @@ def contacts_list_page(
       <input type="hidden" name="order" value="{_e(order)}"/>
       <button type="submit">Фильтр</button>
     </form>
-    <a href="/settings?tab=channels" class="btn secondary">Импорт СМИ</a>
-    <form method="post" action="/contacts/import/upload" enctype="multipart/form-data" style="display:inline">
-      <input type="file" name="file" accept=".xlsx,.csv" required/>
-      <button type="submit" class="btn secondary">Excel/CSV</button>
-    </form>
+    <a href="/settings?tab=channels" class="btn secondary">Импорт СМИ / Excel</a>
     <a href="/" class="btn secondary">← Тендеры</a>
   </div>
   <div class="toolbar-actions">
@@ -936,7 +932,7 @@ def channels_settings_section(cfg: dict) -> str:
         if rows
         else "<p class='hint'>Список пуст — отредактируйте <code>config/channels.yaml</code></p>"
     )
-    return f"""
+    return import_excel_section() + f"""
   <div class="card">
     <h2>Импорт по URL (СМИ / рейтинги)</h2>
     <p class="hint"><strong>Закладки:</strong> в <code>config/channels.yaml</code> у URL должно быть <code>enabled: true</code>, иначе кнопка «все включённые» их пропускает. Импорт попадает в раздел «Контакты».</p>
@@ -1186,52 +1182,66 @@ def research_jobs_page(jobs: list) -> str:
     return _layout("Капча", "contacts", body)
 
 
-def import_preview_page(headers: list[str], rows: list[dict], mapping: dict) -> str:
-    import json
+def import_excel_section() -> str:
+    return """
+  <div class="card">
+    <h2>Импорт из Excel / CSV</h2>
+    <p class="hint">Файл до 5 МБ (.xlsx, .csv). После загрузки — превью и сопоставление колонок.</p>
+    <form method="post" action="/contacts/import/upload" enctype="multipart/form-data">
+      <label>Файл</label>
+      <input type="file" name="file" accept=".xlsx,.csv" required/>
+      <label class="chk">
+        <input type="checkbox" name="use_yandex" value="1"/>
+        Использовать Yandex для сопоставления колонок (данные уйдут в облако)
+      </label>
+      <p style="margin-top:1rem"><button type="submit">Загрузить и настроить маппинг</button></p>
+    </form>
+  </div>
+"""
 
-    opts = {
-        "full_name": "ФИО",
-        "organization": "Организация",
-        "position": "Должность",
-        "email": "E-mail",
-        "phone": "Телефон",
-        "event_title": "Мероприятие",
-        "event_date": "Дата",
-        "notes": "Заметки",
-    }
-    map_rows = []
-    for h in headers:
-        cur = mapping.get(h) or ""
-        opts_html = '<option value="">—</option>' + "".join(
-            f'<option value="{k}"{" selected" if cur == k else ""}>{_e(lbl)}</option>'
-            for k, lbl in opts.items()
-        )
-        map_rows.append(
-            f"<tr><td>{_e(h)}</td><td><select name='col_{_e(h)}' form='commit-form'>{opts_html}</select></td></tr>"
-        )
-    preview = "<table class='dense'><thead><tr>" + "".join(f"<th>{_e(h)}</th>" for h in headers) + "</tr></thead><tbody>"
-    for r in rows:
-        preview += "<tr>" + "".join(f"<td>{_e(str(r.get(h, ''))[:40])}</td>" for h in headers) + "</tr>"
-    preview += "</tbody></table>"
-    mapping_js = json.dumps(mapping, ensure_ascii=False)
+
+def import_mapping_page(
+    filename: str,
+    headers: list[str],
+    sample_rows: list[dict],
+    suggested_mapping: dict[str, str],
+) -> str:
+    from tender_agents.excel_ingest.excel_import import MAPPING_FIELDS
+
+    rows_html = ""
+    for row in sample_rows[:10]:
+        cells = "".join(f"<td>{_e(str(v or ''))}</td>" for v in row.values())
+        rows_html += f"<tr>{cells}</tr>"
+    header_th = "".join(f"<th>{_e(h)}</th>" for h in headers)
+    mapping_rows = ""
+    for field, keywords in MAPPING_FIELDS.items():
+        options = '<option value="">— пропустить —</option>'
+        selected_h = suggested_mapping.get(field, "")
+        for h in headers:
+            sel = " selected" if h == selected_h else ""
+            options += f'<option value="{_e(h)}"{sel}>{_e(h)}</option>'
+        mapping_rows += f"""
+        <tr>
+          <td><strong>{_e(field)}</strong><br><span class="hint">{_e(", ".join(keywords[:3]))}</span></td>
+          <td><select name="map_{_e(field)}">{options}</select></td>
+        </tr>"""
     body = f"""
-  <h1>Импорт контактов</h1>
-  <p class="hint">Проверьте сопоставление колонок и нажмите «Импортировать».</p>
-  <div class="card"><h2>Колонки</h2><table>{''.join(map_rows)}</table></div>
-  <div class="card"><h2>Превью</h2>{preview}</div>
-  <form id="commit-form" method="post" action="/contacts/import/commit">
-    <input type="hidden" name="mapping_json" id="mapping_json" value='{_e(mapping_js)}'/>
-    <button type="submit" onclick="collectMapping()">Импортировать</button>
-  </form>
-  <script>
-  function collectMapping() {{
-    const m = {mapping_js};
-    document.querySelectorAll('select[form=commit-form]').forEach(sel => {{
-      const h = sel.name.replace('col_', '');
-      m[h] = sel.value || null;
-    }});
-    document.getElementById('mapping_json').value = JSON.stringify(m);
-  }}
-  </script>
-  <p><a href="/contacts">← Отмена</a></p>"""
-    return _layout("Импорт", "contacts", body)
+  <h1>Импорт: {_e(filename)}</h1>
+  <p class="meta">Проверьте сопоставление колонок (первые 10 строк).</p>
+  <div class="card" style="overflow-x:auto">
+    <h3>Превью</h3>
+    <table class="dense"><thead><tr>{header_th}</tr></thead><tbody>{rows_html}</tbody></table>
+  </div>
+  <div class="card">
+    <form method="post" action="/contacts/import/commit">
+      <input type="hidden" name="filename" value="{_e(filename)}"/>
+      <h3>Сопоставление</h3>
+      <table><thead><tr><th>Поле в базе</th><th>Колонка в файле</th></tr></thead>
+      <tbody>{mapping_rows}</tbody></table>
+      <p style="margin-top:1.5rem">
+        <button type="submit">Импортировать</button>
+        <a href="/settings?tab=channels" class="btn secondary">Отмена</a>
+      </p>
+    </form>
+  </div>"""
+    return _layout("Маппинг импорта", "contacts", body)

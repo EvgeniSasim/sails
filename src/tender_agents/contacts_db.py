@@ -784,6 +784,86 @@ class ContactRepository:
             await session.refresh(row)
             return int(row.id), is_new
 
+    async def upsert_contacts_batch(
+        self, profiles: list[ContactProfile], appearances: list[ContactAppearance]
+    ) -> int:
+        """Вставить / обновить контакты и их упоминания из импорта Excel."""
+        n = 0
+        now = datetime.now(timezone.utc)
+        apps_by_idx: dict[int, list[ContactAppearance]] = {}
+        for app in appearances:
+            idx = app.profile_id if app.profile_id is not None else -1
+            apps_by_idx.setdefault(idx, []).append(app)
+
+        async with self._session_factory() as session:
+            for i, cp in enumerate(profiles):
+                dk = _dedup_key(cp.organization, cp.full_name)
+                r = await session.execute(
+                    select(ContactProfileRow).where(ContactProfileRow.dedup_key == dk)
+                )
+                prof = r.scalar_one_or_none()
+                if prof:
+                    if cp.email:
+                        prof.email = cp.email
+                    if cp.phone:
+                        prof.phone = cp.phone
+                    if cp.position:
+                        prof.position = cp.position
+                    if cp.notes:
+                        prev = (prof.notes or "").strip()
+                        if cp.notes not in prev:
+                            prof.notes = (prev + "\n" + cp.notes).strip()[:4000]
+                    fs = _as_utc(prof.first_seen_at)
+                    if cp.first_seen_at:
+                        prof.first_seen_at = (
+                            min(fs, _as_utc(cp.first_seen_at)) if fs else cp.first_seen_at
+                        )
+                    ls = _as_utc(prof.last_seen_at)
+                    if cp.last_seen_at:
+                        prof.last_seen_at = max(ls, _as_utc(cp.last_seen_at)) if ls else cp.last_seen_at
+                else:
+                    prof = ContactProfileRow(
+                        dedup_key=dk,
+                        organization=cp.organization,
+                        full_name=cp.full_name,
+                        position=cp.position,
+                        email=cp.email,
+                        phone=cp.phone,
+                        notes=cp.notes,
+                        first_seen_at=cp.first_seen_at or now,
+                        last_seen_at=cp.last_seen_at or now,
+                        appearance_count=0,
+                    )
+                    session.add(prof)
+                    await session.flush()
+
+                for app_data in apps_by_idx.get(i, []):
+                    src_url = app_data.source_url
+                    dup = await session.execute(
+                        select(ContactAppearanceRow).where(
+                            ContactAppearanceRow.profile_id == prof.id,
+                            ContactAppearanceRow.source_url == src_url,
+                            ContactAppearanceRow.source_title == app_data.source_title,
+                        )
+                    )
+                    if dup.scalar_one_or_none() is None:
+                        session.add(
+                            ContactAppearanceRow(
+                                profile_id=prof.id,
+                                appeared_at=app_data.appeared_at or prof.last_seen_at,
+                                source_kind=app_data.source_kind or "import_excel",
+                                source_url=src_url,
+                                source_title=app_data.source_title,
+                                appearance_type=app_data.appearance_type or "event",
+                                snippet=app_data.snippet,
+                                meta_json=app_data.meta_json,
+                            )
+                        )
+                        prof.appearance_count = (prof.appearance_count or 0) + 1
+                n += 1
+            await session.commit()
+        return n
+
     async def update_bio(self, profile_id: int, bio: str) -> bool:
         async with self._session_factory() as session:
             row = await session.get(ContactProfileRow, profile_id)

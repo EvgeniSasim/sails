@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote, urlencode
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 from tender_agents.contacts_db import ContactListFilters
@@ -607,46 +607,94 @@ async def contact_verify_channel(contact_id: int):
 
 
 @app.post("/contacts/import/upload")
-async def contacts_import_upload(file: UploadFile = File(...)):
-    from tender_agents.import.excel_import import parse_workbook, suggest_mapping
-    from tender_agents.web.html_pages import import_preview_page
+async def contacts_import_upload(
+    file: UploadFile,
+    use_yandex: Annotated[str | None, Form()] = None,
+):
+    import uuid
 
-    raw = await file.read()
-    if len(raw) > 5_000_000:
-        return RedirectResponse("/contacts?flash=" + quote("ERR:файл больше 5 МБ"), status_code=303)
-    headers, rows = parse_workbook(raw, filename=file.filename or "")
-    mapping = suggest_mapping(headers, rows[:10])
-    imp_dir = Path("data") / "imports"
-    imp_dir.mkdir(parents=True, exist_ok=True)
-    stash = imp_dir / "last_upload.bin"
-    stash.write_bytes(raw)
-    meta_path = imp_dir / "last_upload.meta"
-    meta_path.write_text(file.filename or "upload.xlsx", encoding="utf-8")
-    return HTMLResponse(import_preview_page(headers, rows[:10], mapping))
+    from tender_agents.excel_ingest.excel_import import parse_workbook, suggest_mapping
+    from tender_agents.web.html_pages import import_mapping_page
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        return RedirectResponse(
+            "/settings?tab=channels&flash=" + quote("ERR:файл больше 5 МБ"),
+            status_code=303,
+        )
+
+    orig_fn = file.filename or "import.xlsx"
+    safe_fn = str(uuid.uuid4()) + Path(orig_fn).suffix
+
+    import_dir = Path("data/imports")
+    import_dir.mkdir(parents=True, exist_ok=True)
+    tmp_path = import_dir / safe_fn
+    tmp_path.write_bytes(content)
+
+    try:
+        rows = parse_workbook(content, orig_fn)
+        if not rows:
+            return RedirectResponse(
+                "/settings?tab=channels&flash=" + quote("ERR:в файле нет данных"),
+                status_code=303,
+            )
+        headers = list(rows[0].keys())
+        mapping = await suggest_mapping(headers, rows, use_yandex=bool(use_yandex))
+        return HTMLResponse(import_mapping_page(safe_fn, headers, rows[:10], mapping))
+    except Exception as e:
+        logger.exception("Import upload failed")
+        return RedirectResponse(
+            f"/settings?tab=channels&flash=" + quote(f"ERR:{str(e)[:200]}"),
+            status_code=303,
+        )
 
 
 @app.post("/contacts/import/commit")
 async def contacts_import_commit(
-    mapping_json: Annotated[str, Form()],
+    request: Request,
+    filename: Annotated[str, Form()],
 ):
-    import json
+    from tender_agents.excel_ingest.excel_import import MAPPING_FIELDS, apply_mapping, parse_workbook
 
-    from tender_agents.import.excel_import import apply_mapping, parse_workbook
+    if "/" in filename or "\\" in filename or ".." in filename:
+        return RedirectResponse(
+            "/settings?tab=channels&flash=" + quote("ERR:некорректное имя файла"),
+            status_code=303,
+        )
 
-    imp_dir = Path("data") / "imports"
-    stash = imp_dir / "last_upload.bin"
-    meta_path = imp_dir / "last_upload.meta"
-    if not stash.is_file():
-        return RedirectResponse("/contacts?flash=" + quote("ERR:нет загруженного файла"), status_code=303)
-    raw = stash.read_bytes()
-    fn = meta_path.read_text(encoding="utf-8") if meta_path.is_file() else ""
-    _, rows = parse_workbook(raw, filename=fn)
-    mapping = json.loads(mapping_json)
-    repo = create_repository()
-    await repo.init()
-    stats = await apply_mapping(repo.contacts_repo(), rows, mapping)
-    msg = "Импорт: новых %(imported)s, обновлено %(merged)s, событий %(events)s" % stats
-    return RedirectResponse("/contacts?flash=" + quote(msg), status_code=303)
+    form_data = await request.form()
+    mapping: dict[str, str] = {}
+    for field in MAPPING_FIELDS:
+        val = form_data.get(f"map_{field}")
+        if val:
+            mapping[field] = str(val)
+
+    import_dir = Path("data/imports")
+    tmp_path = import_dir / filename
+    if not tmp_path.exists():
+        return RedirectResponse(
+            "/settings?tab=channels&flash=" + quote("ERR:временный файл не найден"),
+            status_code=303,
+        )
+
+    try:
+        content = tmp_path.read_bytes()
+        rows = parse_workbook(content, filename)
+        profiles, appearances = apply_mapping(rows, mapping)
+        repo = create_repository()
+        await repo.init()
+        n = await repo.contacts_repo().upsert_contacts_batch(profiles, appearances)
+        tmp_path.unlink(missing_ok=True)
+        return RedirectResponse(
+            "/contacts?flash=" + quote(f"Импорт завершён: {n} контактов."),
+            status_code=303,
+        )
+    except Exception as e:
+        logger.exception("Import commit failed")
+        return RedirectResponse(
+            f"/settings?tab=channels&flash=" + quote(f"ERR:{str(e)[:200]}"),
+            status_code=303,
+        )
 
 
 @app.post("/contact/{contact_id}/sanitize-channels")
