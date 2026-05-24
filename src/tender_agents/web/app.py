@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote, urlencode
 
-from fastapi import BackgroundTasks, FastAPI, File, Form, Query, Request, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 
 from tender_agents.contacts_db import ContactListFilters
@@ -27,6 +27,7 @@ from tender_agents.web.html_pages import (
     lead_detail_page,
     pipeline_page,
     queue_page,
+    platform_job_detail_page,
     settings_page,
 )
 
@@ -889,14 +890,29 @@ async def settings_view(
     else:
         flash = ""
     cfg = store.load_public_config()
-    jobs = []
-    if tab == "jobs":
-        from tender_agents.platform_jobs import create_platform_job_repository
-
-        jr = create_platform_job_repository()
-        await jr.ensure_tables()
-        jobs = await jr.list_recent(25)
+    jobs = await _list_platform_jobs(25) if tab == "jobs" else []
     return HTMLResponse(settings_page(cfg, flash=flash, tab=tab, platform_jobs=jobs))
+
+
+async def _list_platform_jobs(limit: int = 25):
+    from tender_agents.platform_jobs import create_platform_job_repository
+
+    jr = create_platform_job_repository()
+    await jr.ensure_tables()
+    return await jr.list_recent(limit)
+
+
+@app.get("/settings/platform-job/{job_id}", response_class=HTMLResponse)
+async def settings_platform_job_detail(job_id: int):
+    """Полный result_json / error для завершённой задачи."""
+    from tender_agents.platform_jobs import create_platform_job_repository
+
+    jr = create_platform_job_repository()
+    await jr.ensure_tables()
+    job = await jr.get(job_id)
+    if not job:
+        raise HTTPException(404, "Задача не найдена")
+    return HTMLResponse(platform_job_detail_page(job))
 
 
 @app.post("/settings/project")

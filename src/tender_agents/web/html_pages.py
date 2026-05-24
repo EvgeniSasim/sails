@@ -977,9 +977,68 @@ def _panel_visible(tab: str, panel: str) -> str:
     return "" if tab == panel else "hidden"
 
 
+def platform_job_detail_page(job) -> str:
+    """Полная карточка фоновой задачи."""
+    import json
+
+    status = (getattr(job, "status", None) or "").lower()
+    detail = "<p class='hint'>Задача ещё выполняется</p>"
+    if status in ("completed", "failed"):
+        chunks: list[str] = []
+        if getattr(job, "error", None):
+            chunks.append(
+                f"<p style='color:#fca5a5'><strong>Ошибка:</strong> {_e(str(job.error))}</p>"
+            )
+        if getattr(job, "result", None):
+            body = json.dumps(job.result, ensure_ascii=False, indent=2)
+            chunks.append(
+                f"<pre style='white-space:pre-wrap;font-size:0.8rem'>{_e(body)}</pre>"
+            )
+        detail = "".join(chunks) or "<p class='hint'>Нет данных</p>"
+    body = f"""
+  <h1>Задача #{job.id}</h1>
+  <p class="meta">{_e(job.job_type)} · {_e(job.status)}</p>
+  <div class="card"><h2>Результат</h2>{detail}</div>
+  <p><a href="/settings?tab=jobs">← Настройки → Задачи</a></p>"""
+    return _layout(f"Задача #{job.id}", "settings", body)
+
+
+def _platform_job_details_html(job) -> str:
+    """Результат / ошибка для завершённых задач (expand row)."""
+    status = (getattr(job, "status", None) or "").lower()
+    if status not in ("completed", "failed"):
+        return "—"
+    parts: list[str] = []
+    err = getattr(job, "error", None)
+    if err:
+        parts.append(
+            f"<p style='margin:0.35rem 0;color:#fca5a5;font-size:0.8rem'>"
+            f"<strong>Ошибка:</strong> {_e(str(err)[:1500])}</p>"
+        )
+    result = getattr(job, "result", None)
+    if result:
+        import json
+
+        body = json.dumps(result, ensure_ascii=False, indent=2)
+        if len(body) > 6000:
+            body = body[:6000] + "\n…"
+        parts.append(
+            f"<pre style='margin:0.35rem 0 0;font-size:0.72rem;white-space:pre-wrap;"
+            f"max-height:14rem;overflow:auto'>{_e(body)}</pre>"
+        )
+    if not parts:
+        return "—"
+    link = f" <a href='/settings/platform-job/{job.id}' style='margin-left:0.35rem'>полностью</a>"
+    return (
+        "<details style='font-size:0.8rem'>"
+        "<summary style='cursor:pointer;color:#6eb5ff'>Показать</summary>"
+        f"{''.join(parts)}{link}</details>"
+    )
+
+
 def _platform_jobs_rows(jobs: list) -> str:
     if not jobs:
-        return "<tr><td colspan='4'>Задач пока нет</td></tr>"
+        return "<tr><td colspan='5'>Задач пока нет</td></tr>"
     rows = []
     for j in jobs:
         created = ""
@@ -987,7 +1046,7 @@ def _platform_jobs_rows(jobs: list) -> str:
             created = str(j.created_at)[:19]
         rows.append(
             f"<tr><td>{j.id}</td><td>{_e(j.job_type)}</td><td>{_e(j.status)}</td>"
-            f"<td>{_e(created)}</td></tr>"
+            f"<td>{_e(created)}</td><td>{_platform_job_details_html(j)}</td></tr>"
         )
     return "".join(rows)
 
@@ -1291,7 +1350,7 @@ def settings_page(
       <input type="number" name="period_days" value="90" min="7"/>
       <p style="margin-top:0.75rem"><button type="submit">Поставить в очередь</button></p>
     </form>
-    <table class="dense"><thead><tr><th>#</th><th>Тип</th><th>Статус</th><th>Создана</th></tr></thead><tbody>
+    <table class="dense"><thead><tr><th>#</th><th>Тип</th><th>Статус</th><th>Создана</th><th>Результат</th></tr></thead><tbody>
     {_platform_jobs_rows(platform_jobs or [])}
     </tbody></table>
   </div>

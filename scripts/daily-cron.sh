@@ -32,4 +32,18 @@ ANALYST="data/analyst_$(date +%Y%m%d).json"
 
 ROWS=$(tail -n +2 "data/leads_$(date +%Y%m%d).csv" 2>/dev/null | wc -l | tr -d ' ')
 echo "[$(date -Iseconds)] Done. Rows: ${ROWS:-0}. Analyst: ${ANALYST}"
-echo "OpenClaw: сообщите менеджеру число лидов, CSV и путь к analyst JSON."
+
+if [[ -n "${OPENCLAW_WEBHOOK_URL:-}" ]]; then
+  payload=$(printf '{"rows":%s,"analyst":"%s","ts":"%s"}' \
+    "${ROWS:-0}" \
+    "$(printf '%s' "$ANALYST" | sed 's/\\/\\\\/g; s/"/\\"/g')" \
+    "$(date -Iseconds)")
+  curl -fsS -X POST "$OPENCLAW_WEBHOOK_URL" \
+    -H "Content-Type: application/json" \
+    -d "$payload" \
+    >/dev/null 2>&1 \
+    && echo "OpenClaw webhook: OK" \
+    || echo "OpenClaw webhook: failed (non-fatal)"
+else
+  echo "OpenClaw: сообщите менеджеру число лидов, CSV и путь к analyst JSON."
+fi

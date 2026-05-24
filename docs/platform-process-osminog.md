@@ -24,7 +24,11 @@ tender-leads platform scout "https://example-tender.ru/search" --stub
 
 ## Cron
 
-`scripts/daily-cron.sh` — сбор за 30 дней, экспорт CSV, подсказка для OpenClaw.
+`scripts/daily-cron.sh` — сбор за 30 дней, экспорт CSV, опциональный webhook OpenClaw (`OPENCLAW_WEBHOOK_URL` в `.env`).
+
+## Черновики площадок (sources.d)
+
+JSON-файлы в `config/sources.d/*.json` подмешиваются в `load_sources()` после `sources.yaml`. По умолчанию **`enabled: false`** — площадка видна в конфиге, но не участвует в сборе, пока в JSON не указано `"enabled": true`. Поле `id` в JSON или имя файла (`my_platform.json` → `my_platform`) задаёт ключ адаптера. Существующие записи из YAML не перезаписываются.
 
 ## Задачи в БД
 
