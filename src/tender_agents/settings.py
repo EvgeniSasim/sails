@@ -51,6 +51,8 @@ class Settings(BaseSettings):
         fid, mod = resolve_yandex_config(self.yandex_folder_id, self.yandex_model)
         self.yandex_folder_id = fid
         self.yandex_model = mod
+        if self.yandex_enable_web_search and not self.yandex_use_responses_api:
+            self.yandex_enable_web_search = False
         return self
 
 

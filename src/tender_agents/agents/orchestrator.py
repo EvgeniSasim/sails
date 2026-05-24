@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 
 from tender_agents.agents.enrich_agent import EnrichAgent
 from tender_agents.agents.search_agent import SearchAgent
@@ -26,8 +27,12 @@ class Orchestrator:
         backend: ExtractBackend | None = None,
         agent_provider: str | None = None,
         repo: LeadRepository | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
     ):
         self.keywords = keywords or load_keywords()
+        self.date_from = date_from
+        self.date_to = date_to
         sources_cfg = load_sources()
         if source_ids:
             sources_cfg = {k: v for k, v in sources_cfg.items() if k in source_ids}
@@ -57,6 +62,8 @@ class Orchestrator:
         found = await self.search_agent.run(
             self.keywords,
             max_per_keyword=max_per_keyword,
+            date_from=self.date_from,
+            date_to=self.date_to,
         )
 
         if skip_enrich:
@@ -78,6 +85,27 @@ class Orchestrator:
         else:
             leads = await self.enrich_agent.run(found)
 
+        if self.date_from or self.date_to:
+            from tender_agents.text_utils import publish_date_in_range
+
+            before = len(leads)
+            leads = [
+                L
+                for L in leads
+                if publish_date_in_range(
+                    L.publish_date,
+                    date_from=self.date_from,
+                    date_to=self.date_to,
+                )
+            ]
+            logger.info(
+                "Период %s…%s: оставлено %s из %s после enrich",
+                self.date_from,
+                self.date_to,
+                len(leads),
+                before,
+            )
+
         count = await self.store_agent.run(leads)
         result = {
             "keywords": len(self.keywords),
@@ -86,12 +114,21 @@ class Orchestrator:
             "stored": count,
             "agent_provider": self.agent_provider,
             "backend": self.backend.name,
+            "date_from": self.date_from.isoformat() if self.date_from else None,
+            "date_to": self.date_to.isoformat() if self.date_to else None,
         }
         if plan_notes:
             result["yandex_plan"] = plan_notes
         return result
 
     async def _yandex_plan(self) -> dict | None:
+        from tender_agents.yandex.config import is_yandex_configured
+
+        if not is_yandex_configured():
+            logger.info(
+                "Yandex orchestrator plan skipped: задайте API Key и Folder ID в Настройки → API"
+            )
+            return None
         try:
             from tender_agents.yandex.client import YandexStudioClient
             from tender_agents.yandex.prompts import ORCHESTRATOR_INSTRUCTIONS
@@ -120,6 +157,6 @@ class Orchestrator:
             plan = await client.chat_json(instructions=instructions, user_input=user_input)
             logger.info("Yandex orchestrator plan: %s", plan)
             return plan
-        except Exception:
-            logger.exception("Yandex orchestrator plan skipped")
+        except Exception as e:
+            logger.warning("Yandex orchestrator plan skipped: %s", e)
             return None

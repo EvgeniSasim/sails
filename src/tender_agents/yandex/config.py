@@ -89,3 +89,22 @@ def format_model_uri(folder_id: str, model: str) -> str:
     if not fid:
         return mod
     return f"gpt://{fid}/{mod}"
+
+
+def is_yandex_configured(
+    *,
+    api_key: str | None = None,
+    folder_id: str | None = None,
+    model: str | None = None,
+) -> bool:
+    """Достаточно ли настроек для вызовов Yandex GPT (ключ + folder из ID или gpt:// URI)."""
+    from tender_agents.settings import settings
+
+    key = (api_key if api_key is not None else settings.yandex_api_key or "").strip()
+    if not key:
+        return False
+    fid, _ = resolve_yandex_config(
+        folder_id if folder_id is not None else settings.yandex_folder_id,
+        model if model is not None else settings.yandex_model,
+    )
+    return bool(fid)

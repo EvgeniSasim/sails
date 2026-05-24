@@ -19,7 +19,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-web = ["fastapi>=0.111.0", "uvicorn[standard]>=0.30.0", "python-multipart>=0.0.9"]
+web = [
+  "fastapi>=0.111.0",
+  "uvicorn[standard]>=0.30.0",
+  "python-multipart>=0.0.9",
+  "playwright>=1.44.0",
+]
 playwright = ["playwright>=1.44.0"]
 crawl4ai = ["crawl4ai>=0.8.0"]
 yandex = ["openai>=1.40.0"]

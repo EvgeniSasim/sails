@@ -17,7 +17,7 @@ class SourceAdapter(ABC):
     def build_search_url(self, keyword: str) -> str:
         ...
 
-    async def search(self, keyword: str) -> list[SearchResultItem]:
+    async def search(self, keyword: str, **kwargs) -> list[SearchResultItem]:
         url = self.build_search_url(keyword)
         data = await self.backend.extract_list(
             url,

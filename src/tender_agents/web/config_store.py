@@ -101,6 +101,9 @@ class ConfigStore:
       keywords = self._load_keywords_raw()
       sources = self._load_sources_raw()
       agents = self._load_agents_raw()
+      from tender_agents.yandex.config import is_yandex_configured
+
+      yandex_ok = is_yandex_configured()
       return {
           "scraper_backend": s.scraper_backend,
           "agent_provider": s.agent_provider,
@@ -128,6 +131,7 @@ class ConfigStore:
           "sources": sources.get("sources", {}),
           "agents": agents.get("agents", {}),
           "channels": self._load_yaml(CONFIG_DIR / "channels.yaml"),
+          "yandex_configured": yandex_ok,
       }
 
   def save_env_settings(
@@ -140,7 +144,7 @@ class ConfigStore:
       yandex_folder_id: str = "",
       yandex_model: str = "yandexgpt",
       yandex_base_url: str = "",
-      yandex_use_responses_api: bool = True,
+      yandex_use_responses_api: bool = False,
       yandex_enable_web_search: bool = False,
       yandex_max_html_chars: int = 48_000,
       ollama_base_url: str = "",
@@ -163,7 +167,11 @@ class ConfigStore:
           "YANDEX_MODEL": y_mod,
           "YANDEX_BASE_URL": yandex_base_url or "https://llm.api.cloud.yandex.net/v1",
           "YANDEX_USE_RESPONSES_API": "true" if yandex_use_responses_api else "false",
-          "YANDEX_ENABLE_WEB_SEARCH": "true" if yandex_enable_web_search else "false",
+          "YANDEX_ENABLE_WEB_SEARCH": (
+              "true"
+              if yandex_enable_web_search and yandex_use_responses_api
+              else "false"
+          ),
           "YANDEX_MAX_HTML_CHARS": str(yandex_max_html_chars),
           "OLLAMA_BASE_URL": ollama_base_url,
           "OLLAMA_MODEL": ollama_model,
@@ -211,6 +219,16 @@ class ConfigStore:
       orchestrator_instructions: str,
   ) -> None:
       path = CONFIG_DIR / "yandex_agents.yaml"
+      header = ""
+      if path.exists():
+          header_lines: list[str] = []
+          for line in path.read_text(encoding="utf-8").splitlines():
+              if line.strip().startswith("#") or not line.strip():
+                  header_lines.append(line)
+              else:
+                  break
+          if header_lines:
+              header = "\n".join(header_lines).rstrip() + "\n\n"
       data = {
           "agents": {
               "search": {"instructions": search_instructions.strip()},
@@ -218,10 +236,8 @@ class ConfigStore:
               "orchestrator": {"instructions": orchestrator_instructions.strip()},
           }
       }
-      path.write_text(
-          yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False),
-          encoding="utf-8",
-      )
+      body = yaml.dump(data, allow_unicode=True, default_flow_style=False, sort_keys=False)
+      path.write_text(header + body, encoding="utf-8")
 
   def _load_keywords_raw(self) -> dict:
       return self._load_yaml(CONFIG_DIR / "keywords.yaml")

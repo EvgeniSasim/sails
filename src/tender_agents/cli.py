@@ -29,6 +29,111 @@ def _setup_logging(verbose: bool) -> None:
     )
 
 
+platform_app = typer.Typer(help="Задачи платформы Osminog (ключи, аналитика, связи)")
+app.add_typer(platform_app, name="platform")
+
+
+@platform_app.command("keyword-plan")
+def platform_keyword_plan(
+    task: str = typer.Argument(..., help="Задача менеджера"),
+    save: bool = typer.Option(False, "--save", help="Записать в keywords.yaml"),
+    merge_hr_cx: bool = typer.Option(False, "--merge-hr-cx"),
+    verbose: bool = typer.Option(False, "-v"),
+):
+    """Сгенерировать ключевые слова из формулировки задачи."""
+    _setup_logging(verbose)
+
+    async def _go():
+        from tender_agents.agents.keyword_planner_agent import plan_keywords
+        from tender_agents.web.config_store import ConfigStore
+
+        plan = await plan_keywords(task, merge_hr_cx=merge_hr_cx)
+        if save:
+            ConfigStore().save_keywords(plan["keywords"], merge_extra=merge_hr_cx)
+        return plan
+
+    plan = asyncio.run(_go())
+    console.print("[green]Ключи:[/green]", plan.get("keywords"))
+    console.print(plan.get("notes", ""))
+
+
+@platform_app.command("scout")
+def platform_source_scout(
+    url: str = typer.Argument(..., help="URL площадки"),
+    save: bool = typer.Option(True, "--save/--no-save"),
+    stub: bool = typer.Option(False, "--stub", help="Показать черновик Python-адаптера"),
+    verbose: bool = typer.Option(False, "-v"),
+):
+    """Разведка новой площадки → JSON в config/sources.d/."""
+    _setup_logging(verbose)
+
+    async def _go():
+        from tender_agents.agents.source_scout_agent import (
+            render_adapter_stub,
+            save_spec_to_sources_d,
+            scout_source,
+        )
+
+        spec = await scout_source(url)
+        path = save_spec_to_sources_d(spec) if save else None
+        return spec, path
+
+    spec, path = asyncio.run(_go())
+    console.print(spec)
+    if path:
+        console.print(f"[green]Сохранено:[/green] {path}")
+    if stub:
+        from tender_agents.agents.source_scout_agent import render_adapter_stub
+
+        console.print(render_adapter_stub(spec))
+
+
+@platform_app.command("link-resolve")
+def platform_link_resolve(verbose: bool = typer.Option(False, "-v")):
+    """Пересобрать suggested-связи тендер ↔ ЛПР."""
+    _setup_logging(verbose)
+
+    async def _go():
+        from tender_agents.agents.link_resolver_agent import resolve_links_batch
+
+        repo = create_repository()
+        await repo.init()
+        return await resolve_links_batch(repo)
+
+    result = asyncio.run(_go())
+    console.print("[green]Готово[/green]", result)
+
+
+@platform_app.command("analyst")
+def platform_analyst(
+    period_days: int = typer.Option(90, help="Дней назад"),
+    output: Path | None = typer.Option(None, "-o", help="JSON-отчёт в файл"),
+    verbose: bool = typer.Option(False, "-v"),
+):
+    """Аналитика истории тендеров за период."""
+    _setup_logging(verbose)
+    from datetime import date, timedelta
+
+    async def _go():
+        from tender_agents.agents.tender_analyst_agent import analyze_tender_history
+
+        repo = create_repository()
+        await repo.init()
+        d_from = date.today() - timedelta(days=period_days)
+        return await analyze_tender_history(repo, date_from=d_from)
+
+    report = asyncio.run(_go())
+    if output:
+        import json
+
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        console.print(f"[green]Отчёт:[/green] {output}")
+    else:
+        console.print(report.get("summary", ""))
+        console.print(report.get("stats", {}))
+
+
 @app.command()
 def run(
     source: list[str] = typer.Option(
@@ -49,6 +154,12 @@ def run(
         help="Использовать только -k, без config/keywords.yaml",
     ),
     max_per_keyword: int = typer.Option(10, help="Макс. карточек на ключ × площадку"),
+    date_from: str = typer.Option("", help="Дата размещения с (YYYY-MM-DD)"),
+    date_to: str = typer.Option("", help="Дата размещения по"),
+    period_days: int = typer.Option(
+        0,
+        help="Если date_from пуст — взять последние N дней",
+    ),
     skip_enrich: bool = typer.Option(
         False,
         help="Только поиск (без захода в карточки)",
@@ -92,11 +203,21 @@ def run(
     console.print(f"Бэкенд: [cyan]{be.name}[/cyan]")
     if provider == "yandex" or yandex_agent:
         console.print("Агенты: [cyan]Yandex AI Studio[/cyan]")
+    from datetime import date, timedelta
+    from tender_agents.platform_jobs import parse_optional_date
+
+    d_from = parse_optional_date(date_from or None)
+    d_to = parse_optional_date(date_to or None)
+    if not d_from and period_days > 0:
+        d_from = date.today() - timedelta(days=period_days)
+
     orch = Orchestrator(
         keywords=keywords,
         source_ids=source or None,
         backend=be,
         agent_provider=provider or ("yandex" if yandex_agent else None),
+        date_from=d_from,
+        date_to=d_to,
     )
     stats = asyncio.run(
         orch.run_pipeline(max_per_keyword=max_per_keyword, skip_enrich=skip_enrich)

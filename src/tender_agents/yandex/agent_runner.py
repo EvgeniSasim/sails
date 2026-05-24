@@ -39,7 +39,10 @@ class YandexAgentRunner:
         self.enrich_instructions = _load_agent_instructions("enrich", ENRICH_AGENT_INSTRUCTIONS)
 
     def _web_search_tools(self) -> list[dict[str, Any]] | None:
+        """Web Search у Yandex Cloud LLM только через Responses API (обычно 404)."""
         if not settings.yandex_enable_web_search:
+            return None
+        if not settings.yandex_use_responses_api:
             return None
         return [{"type": "web_search"}]
 

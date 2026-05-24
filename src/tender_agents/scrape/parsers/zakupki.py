@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import date
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
 
 import httpx
@@ -22,7 +23,17 @@ HEADERS = {
 }
 
 
-def build_search_url(keyword: str, page: int = 1) -> str:
+def _fmt_eis_date(d: date) -> str:
+    return d.strftime("%d.%m.%Y")
+
+
+def build_search_url(
+    keyword: str,
+    page: int = 1,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> str:
     params = {
         "searchString": keyword,
         "morphology": "on",
@@ -32,6 +43,10 @@ def build_search_url(keyword: str, page: int = 1) -> str:
         "recordsPerPage": "_20",
         "showLotsInfoHidden": "false",
     }
+    if date_from:
+        params["publishDateFrom"] = _fmt_eis_date(date_from)
+    if date_to:
+        params["publishDateTo"] = _fmt_eis_date(date_to)
     return f"{BASE}/epz/order/extendedsearch/results.html?{urlencode(params, safe='+')}"
 
 
@@ -173,12 +188,23 @@ def parse_search_results(html: str, *, keyword: str) -> list[SearchResultItem]:
     return items
 
 
-async def search(keyword: str, *, max_pages: int = 1) -> list[SearchResultItem]:
+async def search(
+    keyword: str,
+    *,
+    max_pages: int = 1,
+    date_from: date | None = None,
+    date_to: date | None = None,
+) -> list[SearchResultItem]:
     all_items: list[SearchResultItem] = []
     seen: set[str] = set()
     async with httpx.AsyncClient(headers=HEADERS, timeout=60.0, follow_redirects=True) as client:
         for page in range(1, max_pages + 1):
-            url = build_search_url(keyword, page=page)
+            url = build_search_url(
+                keyword,
+                page=page,
+                date_from=date_from,
+                date_to=date_to,
+            )
             resp = await client.get(url)
             resp.raise_for_status()
             for item in parse_search_results(resp.text, keyword=keyword):

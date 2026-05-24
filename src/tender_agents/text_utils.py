@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import date, datetime, timezone
 
 # «маркетинговоеисследование» → «маркетинговое исследование»
 WORD_SPLITS = [
@@ -144,6 +145,33 @@ _CYR_LAT = {
 }
 
 
+_LINKEDIN_COMPANY_JUNK_SLUGS = frozenset(
+    {
+        "unavailable",
+        "404",
+        "not-found",
+        "login",
+        "authwall",
+        "company-beta",
+        "guest",
+    }
+)
+
+
+def is_usable_research_url(url: str) -> bool:
+    """Отсечь заглушки LinkedIn и пустые company-slug (угадывание org_latin_slug часто неверно)."""
+    u = (url or "").strip()
+    if not u.startswith("http"):
+        return False
+    low = u.lower()
+    m = re.search(r"linkedin\.com/company/([^/?#]+)", low)
+    if m:
+        slug = m.group(1).strip("/")
+        if slug in _LINKEDIN_COMPANY_JUNK_SLUGS or len(slug) < 2:
+            return False
+    return True
+
+
 def org_latin_slug(organization: str) -> str | None:
     """Транслит бренда для домена: Нанолек → nanolek."""
     n = normalize_org_name(organization)
@@ -194,5 +222,40 @@ def is_plausible_contact_phone(phone: str) -> bool:
         return False
     # Из открытой выдачи почти всегда мобильный; 893… без +7 — мусор
     if digits[1] != "9":
+        return False
+    return True
+
+
+def parse_publish_date(s: str | None) -> date | None:
+    """ISO YYYY-MM-DD или DD.MM.YYYY → date."""
+    if not s or not str(s).strip():
+        return None
+    raw = str(s).strip()[:32]
+    try:
+        if len(raw) >= 10 and raw[4] == "-":
+            return date.fromisoformat(raw[:10])
+        if len(raw) >= 10 and raw[2] == "." and raw[5] == ".":
+            d, m, y = raw[:10].split(".")
+            return date(int(y), int(m), int(d))
+    except (ValueError, TypeError):
+        pass
+    return None
+
+
+def publish_date_in_range(
+    publish_date: str | None,
+    *,
+    date_from: date | None,
+    date_to: date | None,
+) -> bool:
+    """True если дата пустая (не отфильтровываем) или попадает в диапазон."""
+    if not date_from and not date_to:
+        return True
+    parsed = parse_publish_date(publish_date)
+    if parsed is None:
+        return True
+    if date_from and parsed < date_from:
+        return False
+    if date_to and parsed > date_to:
         return False
     return True

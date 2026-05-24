@@ -8,20 +8,15 @@ from tender_agents.models import TenderLead
 
 
 async def ingest_url(url: str, *, html_file: str | None = None) -> list[TenderLead]:
+    from tender_agents.channels.registry import match_parser_id, list_parsers, run_parser
+
     u = url.strip()
+    parser_id = match_parser_id(u)
+    if parser_id:
+        return await run_parser(parser_id, u, html_file=html_file)
     host = urlparse(u).netloc.lower()
-    if "kommersant.ru" in host:
-        from pathlib import Path
-
-        from tender_agents.channels import kommersant as k
-
-        if html_file:
-            p = Path(html_file).expanduser()
-            if not p.is_file():
-                raise ValueError(f"Файл не найден: {p}")
-            return k.parse_kommersant_from_html_file(str(p), article_url=u)
-        return await k.ingest_kommersant_doc(u)
+    known = ", ".join(p["hosts"] for p in list_parsers())
     raise ValueError(
         f"Хост не поддержан: {host}. "
-        "Сейчас: kommersant.ru (таблицы рейтингов). Добавьте парсер в channels/ingest.py."
+        f"Доступные домены: {known}. Добавьте запись в channels/registry.py."
     )

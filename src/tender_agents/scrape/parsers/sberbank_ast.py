@@ -12,7 +12,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; TenderLeadAgents/0.1)"}
 
 
 async def search(keyword: str, *, search_url: str, base_url: str, max_items: int = 20) -> list[SearchResultItem]:
-    async with httpx.AsyncClient(headers=HEADERS, timeout=90.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(headers=HEADERS, timeout=45.0, follow_redirects=True) as client:
         resp = await client.get(search_url)
         resp.raise_for_status()
         html = resp.text

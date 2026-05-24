@@ -11,6 +11,12 @@ def linkedin_people_search_url(name: str, company: str) -> str:
     return "https://www.linkedin.com/search/results/people/?keywords=" + quote(q)
 
 
+def linkedin_company_search_url(company: str) -> str:
+    """Поиск компании в LinkedIn (не угадывать /company/slug — часто ведёт на unavailable)."""
+    q = company.strip()
+    return "https://www.linkedin.com/search/results/companies/?keywords=" + quote(q)
+
+
 def yandex_people_search_url(name: str, company: str) -> str:
     """Открытая выдача Яндекса — часто есть страница компании / пресс-подразделение."""
     q = f"{name.strip()} {company.strip()} контакт email".strip()

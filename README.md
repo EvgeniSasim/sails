@@ -39,6 +39,7 @@ tender-leads backends   # список бэкендов
 cd agents
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[web]"
+playwright install chromium   # B2B-Center / Сбербанк-АСТ (уже в зависимостях [web])
 
 cp .env.example .env
 # SCRAPER_BACKEND=httpx  — уже по умолчанию

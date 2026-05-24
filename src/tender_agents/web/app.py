@@ -318,6 +318,110 @@ async def lead_detail(lead_id: int, saved: str = Query(""), msg: str = Query("")
     return HTMLResponse(lead_detail_page(lead, flash=flash, tender_contact_links=links))
 
 
+@app.get("/deal/{lead_id}", response_class=HTMLResponse)
+async def deal_card(lead_id: int, msg: str = Query("")):
+    from tender_agents.web.html_pages import deal_card_page
+
+    repo = create_repository()
+    await repo.init()
+    lead = await repo.get_by_id(lead_id)
+    if not lead:
+        return HTMLResponse("<h1>Сделка не найдена</h1><a href='/'>← Тендеры</a>", status_code=404)
+    links = await repo.contacts_repo().list_tender_contact_links_for_lead(lead_id)
+    return HTMLResponse(deal_card_page(lead, tender_contact_links=links, flash=msg))
+
+
+@app.get("/analyst", response_class=HTMLResponse)
+async def analyst_view(
+    date_from: str = Query(""),
+    date_to: str = Query(""),
+    period_days: str = Query("90"),
+):
+    from tender_agents.platform_jobs import parse_optional_date
+    from tender_agents.web.html_pages import analyst_page
+
+    repo = create_repository()
+    await repo.init()
+    d_from = parse_optional_date(date_from)
+    d_to = parse_optional_date(date_to)
+    if not d_from and period_days.strip().isdigit():
+        d_from = date.today() - timedelta(days=int(period_days.strip()))
+    report = None
+    if d_from or d_to:
+        from tender_agents.agents.tender_analyst_agent import analyze_tender_history
+
+        report = await analyze_tender_history(repo, date_from=d_from, date_to=d_to)
+    return HTMLResponse(
+        analyst_page(
+            report=report,
+            date_from=d_from.isoformat() if d_from else "",
+            date_to=d_to.isoformat() if d_to else "",
+            period_days=period_days,
+        )
+    )
+
+
+@app.get("/api/tenders/history.csv")
+async def tenders_history_csv(
+    date_from: str = Query(""),
+    date_to: str = Query(""),
+    limit: int = Query(2000, ge=1, le=10000),
+):
+    import csv
+    import io
+
+    from tender_agents.platform_jobs import parse_optional_date
+
+    repo = create_repository()
+    await repo.init()
+    flt = LeadFilters(
+        channel="tender",
+        date_from=parse_optional_date(date_from),
+        date_to=parse_optional_date(date_to),
+    )
+    leads = await repo.list_filtered(flt, limit=limit, sort_by="updated", order="desc")
+    buf = io.StringIO()
+    w = csv.writer(buf, delimiter=";")
+    w.writerow(
+        [
+            "id",
+            "score",
+            "segment",
+            "source",
+            "title",
+            "customer_name",
+            "customer_inn",
+            "publish_date",
+            "end_date",
+            "matched_keyword",
+            "url",
+            "pipeline_status",
+        ]
+    )
+    for L in leads:
+        w.writerow(
+            [
+                L.id,
+                L.score,
+                L.segment.value,
+                L.source,
+                L.title,
+                L.customer_name or "",
+                L.customer_inn or "",
+                L.publish_date or "",
+                L.end_date or "",
+                L.matched_keyword or "",
+                L.url,
+                L.pipeline_status.value,
+            ]
+        )
+    return PlainTextResponse(
+        "\ufeff" + buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": "attachment; filename=tender_history.csv"},
+    )
+
+
 @app.post("/lead/{lead_id}/pipeline")
 async def lead_pipeline_update(
     lead_id: int,
@@ -785,7 +889,14 @@ async def settings_view(
     else:
         flash = ""
     cfg = store.load_public_config()
-    return HTMLResponse(settings_page(cfg, flash=flash, tab=tab))
+    jobs = []
+    if tab == "jobs":
+        from tender_agents.platform_jobs import create_platform_job_repository
+
+        jr = create_platform_job_repository()
+        await jr.ensure_tables()
+        jobs = await jr.list_recent(25)
+    return HTMLResponse(settings_page(cfg, flash=flash, tab=tab, platform_jobs=jobs))
 
 
 @app.post("/settings/project")
@@ -900,6 +1011,67 @@ async def settings_keywords_save(
     return RedirectResponse("/settings?tab=keywords&saved=1", status_code=303)
 
 
+@app.post("/settings/keyword-plan")
+async def settings_keyword_plan(
+    background_tasks: BackgroundTasks,
+    manager_task: Annotated[str, Form()],
+    merge_extra: Annotated[str | None, Form()] = None,
+    save_keywords: Annotated[str | None, Form()] = None,
+):
+    from tender_agents.platform_jobs import create_platform_job_repository
+
+    jr = create_platform_job_repository()
+    await jr.ensure_tables()
+    job = await jr.create(
+        "keyword_plan",
+        {
+            "task": manager_task.strip(),
+            "merge_hr_cx": merge_extra is not None,
+            "save": save_keywords is not None,
+        },
+    )
+    background_tasks.add_task(_platform_jobs_background, job.id)
+    return RedirectResponse(
+        f"/settings?tab=jobs&saved={quote('Планирование ключей запущено (задача #' + str(job.id) + ')')}",
+        status_code=303,
+    )
+
+
+@app.post("/settings/platform-job")
+async def settings_platform_job(
+    background_tasks: BackgroundTasks,
+    job_type: Annotated[str, Form()],
+    date_from: Annotated[str, Form()] = "",
+    date_to: Annotated[str, Form()] = "",
+    period_days: Annotated[str, Form()] = "",
+    scout_url: Annotated[str, Form()] = "",
+    contact_id: Annotated[str, Form()] = "",
+):
+    from tender_agents.platform_jobs import create_platform_job_repository
+
+    payload: dict = {}
+    if date_from.strip():
+        payload["date_from"] = date_from.strip()
+    if date_to.strip():
+        payload["date_to"] = date_to.strip()
+    if period_days.strip().isdigit():
+        payload["period_days"] = int(period_days.strip())
+    if scout_url.strip():
+        payload["url"] = scout_url.strip()
+        payload["save"] = True
+    if contact_id.strip().isdigit():
+        payload["contact_id"] = int(contact_id.strip())
+
+    jr = create_platform_job_repository()
+    await jr.ensure_tables()
+    job = await jr.create(job_type, payload)
+    background_tasks.add_task(_platform_jobs_background, job.id)
+    return RedirectResponse(
+        f"/settings?tab=jobs&saved={quote('Задача #' + str(job.id) + ' (' + job_type + ') в очереди')}",
+        status_code=303,
+    )
+
+
 @app.post("/settings/agents")
 async def settings_agents_save(
     search_instructions: Annotated[str, Form()],
@@ -954,27 +1126,35 @@ def _channels_bookmarks_background(dry: bool) -> None:
     asyncio.run(_run_channels_bookmarks(dry=dry))
 
 
-async def _run_pipeline_job(*, max_per_keyword: int, skip_enrich: bool):
-    from tender_agents.agents.orchestrator import Orchestrator
-    from tender_agents.config_loader import load_keywords
-    from tender_agents.scrape.factory import get_backend
+async def _run_pipeline_job(
+    *,
+    max_per_keyword: int,
+    skip_enrich: bool,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    period_days: int | None = None,
+):
+    from tender_agents.platform_job_runner import _run_tender_pipeline
 
-    cfg = store.load_public_config()
-    keywords = load_keywords()
-    logger.info("Pipeline keywords (%s): %s", len(keywords), keywords)
-    orch = Orchestrator(
-        keywords=keywords,
-        backend=get_backend(cfg["scraper_backend"]),
-        agent_provider=cfg["agent_provider"],
-    )
+    payload: dict = {
+        "max_per_keyword": max_per_keyword,
+        "skip_enrich": skip_enrich,
+        "date_from": date_from,
+        "date_to": date_to,
+    }
+    if period_days:
+        payload["period_days"] = period_days
     try:
-        stats = await orch.run_pipeline(
-            max_per_keyword=max_per_keyword,
-            skip_enrich=skip_enrich,
-        )
+        stats = await _run_tender_pipeline(payload)
         logger.info("Dashboard pipeline done: %s", stats)
     except Exception:
         logger.exception("Dashboard pipeline failed")
+
+
+def _platform_jobs_background(job_id: int) -> None:
+    from tender_agents.platform_job_runner import execute_platform_job
+
+    asyncio.run(execute_platform_job(job_id))
 
 
 @app.post("/settings/run")
@@ -982,13 +1162,36 @@ async def settings_run_pipeline(
     background_tasks: BackgroundTasks,
     max_per_keyword: Annotated[int, Form()] = 10,
     skip_enrich: Annotated[str | None, Form()] = None,
+    date_from: Annotated[str, Form()] = "",
+    date_to: Annotated[str, Form()] = "",
+    period_days: Annotated[str, Form()] = "",
 ):
+    from tender_agents.scrape.factory import _YANDEX_BACKEND_NAMES
+    from tender_agents.yandex.config import is_yandex_configured
+
+    cfg = store.load_public_config()
+    saved = "Запуск в фоне"
+    backend = (cfg.get("scraper_backend") or "httpx").lower()
+    if backend in _YANDEX_BACKEND_NAMES and not is_yandex_configured():
+        saved = "Запуск в фоне (httpx: Yandex API не задан — см. Настройки → API)"
+    pd = None
+    if (period_days or "").strip().isdigit():
+        pd = int(period_days.strip())
     background_tasks.add_task(
         _run_pipeline_job,
         max_per_keyword=max_per_keyword,
         skip_enrich=skip_enrich is not None,
+        date_from=(date_from or "").strip() or None,
+        date_to=(date_to or "").strip() or None,
+        period_days=pd,
     )
-    return RedirectResponse("/settings?tab=run&saved=Запуск+в+фоне", status_code=303)
+    period_hint = ""
+    if pd or date_from or date_to:
+        period_hint = " (с фильтром периода)"
+    return RedirectResponse(
+        "/settings?tab=run&saved=" + quote(saved + period_hint),
+        status_code=303,
+    )
 
 
 @app.post("/settings/channels-ingest")

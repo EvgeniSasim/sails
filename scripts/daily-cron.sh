@@ -23,8 +23,13 @@ fi
 
 mkdir -p data
 
-# zakupki — бесплатный нативный парсер; для B2B добавьте -b playwright
-"$VENV" run -s zakupki -k "проведение онлайн опросов" -k "онлайн опрос" --max-per-keyword 15
+# zakupki — бесплатный нативный парсер; период 30 дней (OSM-01)
+"$VENV" run -s zakupki --period-days 30 --max-per-keyword 15
 "$VENV" export -o "data/leads_$(date +%Y%m%d).csv"
+"$VENV" platform link-resolve 2>/dev/null || true
+ANALYST="data/analyst_$(date +%Y%m%d).json"
+"$VENV" platform analyst --period-days 30 -o "$ANALYST" 2>/dev/null || true
 
-echo "[$(date -Iseconds)] Done. Rows: $(tail -n +2 "data/leads_$(date +%Y%m%d).csv" | wc -l | tr -d ' ')"
+ROWS=$(tail -n +2 "data/leads_$(date +%Y%m%d).csv" 2>/dev/null | wc -l | tr -d ' ')
+echo "[$(date -Iseconds)] Done. Rows: ${ROWS:-0}. Analyst: ${ANALYST}"
+echo "OpenClaw: сообщите менеджеру число лидов, CSV и путь к analyst JSON."

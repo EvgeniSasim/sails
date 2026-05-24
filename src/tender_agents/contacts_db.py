@@ -626,9 +626,11 @@ class ContactRepository:
             row = await session.get(ContactProfileRow, profile_id)
             if not row:
                 return {"added": 0, "skipped": 0, "channels": []}
+            from tender_agents.text_utils import is_usable_research_url
+
             for f in findings:
                 url = (f.source_url or "").strip()
-                if not url:
+                if not url or not is_usable_research_url(url):
                     skipped += 1
                     continue
                 dup = await session.execute(
@@ -683,8 +685,12 @@ class ContactRepository:
         return {"added": added, "skipped": skipped, "channels": sorted(set(channels))}
 
     async def sanitize_contact_channels(self, profile_id: int) -> list[str]:
-        """Убрать e-mail/телефон, попавшие из служебных страниц поисковиков."""
-        from tender_agents.text_utils import is_plausible_contact_email, is_plausible_contact_phone
+        """Убрать мусор: служебные e-mail/тел., битые LinkedIn, находки unavailable."""
+        from tender_agents.text_utils import (
+            is_plausible_contact_email,
+            is_plausible_contact_phone,
+            is_usable_research_url,
+        )
 
         cleared: list[str] = []
         async with self._session_factory() as session:
@@ -697,6 +703,22 @@ class ContactRepository:
             if row.phone and not is_plausible_contact_phone(row.phone):
                 row.phone = None
                 cleared.append("phone")
+            if row.linkedin_url and not is_usable_research_url(row.linkedin_url):
+                row.linkedin_url = None
+                cleared.append("linkedin_url")
+            junk = await session.execute(
+                select(ContactAppearanceRow).where(
+                    ContactAppearanceRow.profile_id == profile_id,
+                )
+            )
+            removed = 0
+            for app_row in junk.scalars().all():
+                if not is_usable_research_url(app_row.source_url or ""):
+                    await session.delete(app_row)
+                    removed += 1
+            if removed:
+                row.appearance_count = max(0, (row.appearance_count or 0) - removed)
+                cleared.append(f"appearances:{removed}")
             if cleared:
                 await session.commit()
         return cleared

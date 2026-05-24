@@ -165,8 +165,8 @@ class YandexStudioClient:
             else settings.yandex_use_responses_api
         )
         if tools and not use_responses:
-            logger.warning(
-                "web_search tools требуют Responses API; у Yandex LLM API его нет — tools игнорируются"
+            logger.debug(
+                "tools переданы без Responses API — игнорируются (Yandex LLM: chat/completions)"
             )
             tools = None
 

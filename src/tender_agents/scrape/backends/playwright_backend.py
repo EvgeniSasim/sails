@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any
+import importlib.util
+import logging
 
 from tender_agents.scrape.backends.httpx_llm_free import HttpxFreeBackend
+
+logger = logging.getLogger(__name__)
+
+
+def playwright_installed() -> bool:
+    return importlib.util.find_spec("playwright") is not None
 
 
 class PlaywrightBackend(HttpxFreeBackend):
@@ -20,10 +27,16 @@ class PlaywrightBackend(HttpxFreeBackend):
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page(
-                user_agent="Mozilla/5.0 (compatible; TenderLeadAgents/0.1)"
-            )
-            await page.goto(url, wait_until="networkidle", timeout=90_000)
-            html = await page.content()
-            await browser.close()
+            try:
+                page = await browser.new_page(
+                    user_agent="Mozilla/5.0 (compatible; TenderLeadAgents/0.1)"
+                )
+                await page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=60_000,
+                )
+                html = await page.content()
+            finally:
+                await browser.close()
         return html

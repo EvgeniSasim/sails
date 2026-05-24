@@ -1,6 +1,10 @@
+import logging
+
 from tender_agents.models import SearchResultItem
 from tender_agents.scrape import parsers
 from tender_agents.sources.base import SourceAdapter
+
+logger = logging.getLogger(__name__)
 
 
 class B2BCenterAdapter(SourceAdapter):
@@ -10,9 +14,11 @@ class B2BCenterAdapter(SourceAdapter):
         return f"{self.base_url}/market/"
 
     async def search(self, keyword: str) -> list[SearchResultItem]:
-        if getattr(self.backend, "name", None) == "httpx":
+        try:
             return await parsers.b2b_center.search(
                 keyword,
                 search_url=self.build_search_url(keyword),
             )
-        return await super().search(keyword)
+        except Exception as e:
+            logger.warning("b2b_center: поиск «%s» пропущен (%s)", keyword, e)
+            return []

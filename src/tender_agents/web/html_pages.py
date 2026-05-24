@@ -47,6 +47,8 @@ tbody td a:hover { color: #ffffff; text-decoration-color: rgba(255, 255, 255, 0.
 .status-dot.off { background: #6b7280; }
 .hint { font-size: 0.75rem; color: #6b7c93; margin-top: 0.25rem; }
 .hidden { display: none; }
+.settings-section { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid #2a3544; }
+.settings-section:first-child { margin-top: 0; padding-top: 0; border-top: none; }
 .toolbar { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; margin-bottom: 1rem; }
 .toolbar input[name=q] { width: 220px; }
 .toolbar select { width: auto; min-width: 120px; }
@@ -103,6 +105,7 @@ def _nav(active: str) -> str:
         ("contacts", "/contacts", "Контакты"),
         ("pipeline", "/pipeline", "Воронка"),
         ("analytics", "/analytics", "Аналитика"),
+        ("analyst", "/analyst", "История"),
         ("channels", "/settings?tab=channels", "Импорт СМИ"),
         ("settings", "/settings", "Настройки"),
     ]
@@ -434,6 +437,7 @@ def lead_detail_page(lead, *, flash: str = "", tender_contact_links: list | None
       <label>Заметки</label>
       <textarea name="notes">{_e(lead.notes or '')}</textarea>
       <p style="margin-top:0.75rem"><button type="submit">Сохранить</button>
+      <a href="/deal/{lead.id}" class="btn secondary" style="margin-left:0.5rem">Сделка</a>
       <a href="/" class="btn secondary" style="margin-left:0.5rem">← Тендеры</a></p>
     </form>
   </div>"""
@@ -485,6 +489,8 @@ _APPEARANCE_KIND_RU = {
 
 
 def _appearance_meta_html(meta: dict | None) -> str:
+    from tender_agents.text_utils import is_usable_research_url
+
     if not meta:
         return ""
     bits: list[str] = []
@@ -492,8 +498,9 @@ def _appearance_meta_html(meta: dict | None) -> str:
         bits.append(f"e-mail: {_e(str(em))}")
     for ph in (meta.get("phones") or [])[:1]:
         bits.append(f"тел.: {_e(str(ph))}")
-    if meta.get("linkedin_url"):
-        bits.append(f'<a href="{_e(meta["linkedin_url"])}" target="_blank" rel="noopener">LinkedIn</a>')
+    li = meta.get("linkedin_url")
+    if li and is_usable_research_url(str(li)):
+        bits.append(f'<a href="{_e(str(li))}" target="_blank" rel="noopener">LinkedIn</a>')
     if meta.get("telegram"):
         bits.append(_e(str(meta["telegram"])))
     if meta.get("vk"):
@@ -504,10 +511,14 @@ def _appearance_meta_html(meta: dict | None) -> str:
 
 
 def _appearances_section_html(apps: list, *, title: str, empty_hint: str) -> str:
+    from tender_agents.text_utils import is_usable_research_url
+
     if not apps:
         return f"<p class='hint'>{_e(empty_hint)}</p>"
     blocks: list[str] = []
     for a in apps:
+        if not is_usable_research_url(a.source_url or ""):
+            continue
         kind = a.source_kind or ""
         kind_ru = _APPEARANCE_KIND_RU.get(kind, kind or "источник")
         st = _e((a.source_title or a.source_url or "")[:120])
@@ -783,7 +794,7 @@ def contact_detail_page(p, *, flash: str = "", tender_links: list | None = None,
             f'<form method="post" action="/contact/{p.id}/enrich" style="display:inline">'
             f'<button type="submit" class="btn secondary">Быстро: только каналы</button></form> '
             f'<form method="post" action="/contact/{p.id}/sanitize-channels" style="display:inline">'
-            f'<button type="submit" class="btn secondary">Убрать мусорный e-mail/тел.</button></form>'
+            f'<button type="submit" class="btn secondary">Убрать мусор (e-mail/тел./битые ссылки)</button></form>'
             f"</p></div>"
         )
     body = f"""
@@ -933,7 +944,7 @@ def channels_settings_section(cfg: dict) -> str:
         else "<p class='hint'>Список пуст — отредактируйте <code>config/channels.yaml</code></p>"
     )
     return import_excel_section() + f"""
-  <div class="card">
+  <div class="settings-section">
     <h2>Импорт по URL (СМИ / рейтинги)</h2>
     <p class="hint"><strong>Закладки:</strong> в <code>config/channels.yaml</code> у URL должно быть <code>enabled: true</code>, иначе кнопка «все включённые» их пропускает. Импорт попадает в раздел «Контакты».</p>
     <p class="hint">Сейчас: <strong>kommersant.ru/doc/…</strong> с таблицей (ФИО / должность / компания). Если по сети «ничего не находит», сохраните страницу в браузере и в терминале: <code>tender-leads open ingest «URL» --html-file файл.html</code></p>
@@ -946,7 +957,7 @@ def channels_settings_section(cfg: dict) -> str:
       <p style="margin-top:1rem"><button type="submit">Импортировать</button></p>
     </form>
   </div>
-  <div class="card">
+  <div class="settings-section">
     <h2>Закладки из конфига</h2>
     {table}
     <form method="post" action="/settings/channels-bookmarks" style="margin-top:1rem">
@@ -966,7 +977,112 @@ def _panel_visible(tab: str, panel: str) -> str:
     return "" if tab == panel else "hidden"
 
 
-def settings_page(cfg: dict, *, flash: str = "", tab: str = "project") -> str:
+def _platform_jobs_rows(jobs: list) -> str:
+    if not jobs:
+        return "<tr><td colspan='4'>Задач пока нет</td></tr>"
+    rows = []
+    for j in jobs:
+        created = ""
+        if getattr(j, "created_at", None):
+            created = str(j.created_at)[:19]
+        rows.append(
+            f"<tr><td>{j.id}</td><td>{_e(j.job_type)}</td><td>{_e(j.status)}</td>"
+            f"<td>{_e(created)}</td></tr>"
+        )
+    return "".join(rows)
+
+
+def deal_card_page(lead, *, tender_contact_links: list | None = None, flash: str = "") -> str:
+    """Единая карточка сделки: тендер + ЛПР + питч."""
+    from tender_agents.models import PipelineStatus
+
+    sc = _score_class(lead.score)
+    seg = lead.segment.value
+    lpr_rows = ""
+    for link in tender_contact_links or []:
+        cid = link.get("contact_id")
+        conf = link.get("confidence") or 0
+        st = link.get("status") or ""
+        lpr_rows += (
+            f"<tr><td><a href='/contact/{cid}'>{_e(link.get('full_name') or '')}</a></td>"
+            f"<td>{_e((link.get('organization') or '')[:50])}</td>"
+            f"<td>{conf}</td><td>{_e(st)}</td></tr>"
+        )
+    if not lpr_rows:
+        lpr_rows = "<tr><td colspan='4'>Нет связей — запустите «Связи» в Настройки → Задачи</td></tr>"
+    pipe_opts = "".join(
+        f'<option value="{s.value}"{" selected" if lead.pipeline_status == s else ""}>{s.value}</option>'
+        for s in PipelineStatus
+    )
+    body = f"""
+  <h1>Сделка</h1>
+  <p class="meta"><span class="score {sc}">{lead.score}</span> · <span class="seg {seg}">{seg}</span></p>
+  <h2 style="font-size:1.1rem;margin-top:0">{_e(lead.title[:200])}</h2>
+  <p class="hint">Заказчик: {_e(lead.customer_name or '—')} · до {_e(lead.end_date or '—')}</p>
+  <p><a href="{_e(lead.url)}" target="_blank" rel="noopener">Карточка закупки ↗</a>
+     · <a href="/lead/{lead.id}">Полная карточка лида</a></p>
+  <div class="card">
+    <h2>ЛПР (связи)</h2>
+    <table class="dense"><thead><tr><th>ФИО</th><th>Организация</th><th>Увер.</th><th>Статус</th></tr></thead>
+    <tbody>{lpr_rows}</tbody></table>
+  </div>
+  <div class="card">
+    <h2>Питч</h2>
+    <div class="pitch">{_e(lead.pitch or '')}</div>
+  </div>
+  <div class="card">
+    <h2>Воронка</h2>
+    <form method="post" action="/lead/{lead.id}/pipeline">
+      <select name="pipeline_status">{pipe_opts}</select>
+      <textarea name="notes" placeholder="Заметки">{_e(lead.notes or '')}</textarea>
+      <p style="margin-top:0.75rem"><button type="submit">Сохранить</button>
+      <a href="/queue" class="btn secondary" style="margin-left:0.5rem">Очередь</a></p>
+    </form>
+  </div>"""
+    return _layout("Сделка", "tenders", body, flash=flash)
+
+
+def analyst_page(
+    *,
+    report: dict | None,
+    date_from: str = "",
+    date_to: str = "",
+    period_days: str = "90",
+) -> str:
+    report_html = "<p class='hint'>Задайте период и откройте страницу с параметрами или нажмите «Анализ».</p>"
+    if report:
+        stats = report.get("stats") or {}
+        recs = report.get("keyword_recommendations") or []
+        report_html = f"""
+    <p>{_e(report.get('summary') or '')}</p>
+    <p class="hint">{_e(report.get('platform_notes') or '')}</p>
+    <h3>Статистика</h3>
+    <pre style="white-space:pre-wrap;font-size:0.85rem">{_e(str(stats)[:4000])}</pre>
+    <h3>Рекомендуемые ключи</h3>
+    <ul>{''.join(f'<li>{_e(k)}</li>' for k in recs[:12])}</ul>"""
+    body = f"""
+  <h1>Аналитика истории тендеров</h1>
+  <p class="hint">Выгрузка: <a href="/api/tenders/history.csv">CSV истории</a></p>
+  <form method="get" action="/analyst" class="card">
+    <div class="row2">
+      <div><label>С</label><input type="date" name="date_from" value="{_e(date_from)}"/></div>
+      <div><label>По</label><input type="date" name="date_to" value="{_e(date_to)}"/></div>
+    </div>
+    <label>Или дней назад (если «С» пусто)</label>
+    <input type="number" name="period_days" value="{_e(period_days)}" min="7" max="730"/>
+    <p style="margin-top:1rem"><button type="submit">Построить отчёт</button></p>
+  </form>
+  <div class="card">{report_html}</div>"""
+    return _layout("Аналитика", "analytics", body)
+
+
+def settings_page(
+    cfg: dict,
+    *,
+    flash: str = "",
+    tab: str = "project",
+    platform_jobs: list | None = None,
+) -> str:
     kw_text = _e("\n".join(cfg.get("keywords", [])))
     sources = cfg.get("sources", {})
     agents = cfg.get("agents", {})
@@ -1010,6 +1126,7 @@ def settings_page(cfg: dict, *, flash: str = "", tab: str = "project") -> str:
         + _tab_link("keywords", "Ключи", tab)
         + _tab_link("agents", "Агенты", tab)
         + _tab_link("run", "Запуск", tab)
+        + _tab_link("jobs", "Задачи", tab)
         + _tab_link("channels", "Каналы", tab)
     )
 
@@ -1060,7 +1177,8 @@ def settings_page(cfg: dict, *, flash: str = "", tab: str = "project") -> str:
         placeholder="yandexgpt или gpt://b1g…/yandexgpt"/>
       <p class="hint">Короткое имя (<code>yandexgpt</code>, <code>yandexgpt-lite</code>, <code>yandexgpt-pro</code>) или полный URI <code>gpt://ID_каталога/модель</code> — тогда Folder ID можно не дублировать.</p>
       <label class="chk"><input type="checkbox" name="yandex_use_responses_api" {yr}/> Responses API <span class="hint">(у Yandex Cloud обычно нет — оставьте выкл.)</span></label>
-      <label class="chk"><input type="checkbox" name="yandex_enable_web_search" {yw}/> Web Search</label>
+      <label class="chk"><input type="checkbox" name="yandex_enable_web_search" {yw}/> Web Search
+        <span class="hint">(только с Responses API; при chat/completions не работает — лучше выкл.)</span></label>
 
       <h2>ScrapeGraphAI</h2>
       <p class="hint"><span class="status-dot {sgai_on}"></span>{'задан' if cfg.get('sgai_api_key_set') else 'не задан'}</p>
@@ -1084,6 +1202,8 @@ def settings_page(cfg: dict, *, flash: str = "", tab: str = "project") -> str:
   </div>
 
   <div class="card {_panel_visible(tab, 'sources')}">
+    <p class="hint">Для стабильного сбора достаточно <strong>zakupki</strong> + бэкенд <code>httpx</code>.
+      Сбербанк-АСТ часто недоступен (<code>ERR_CONNECTION_TIMED_OUT</code>) — не включайте без проверки.</p>
     <form method="post" action="/settings/sources">
       {source_checks}
       <p style="margin-top:1rem"><button type="submit">Сохранить площадки</button></p>
@@ -1100,9 +1220,25 @@ def settings_page(cfg: dict, *, flash: str = "", tab: str = "project") -> str:
       <p style="margin-top:1rem"><button type="submit">Сохранить</button>
       <a href="/settings?tab=run" class="btn secondary" style="margin-left:0.5rem">→ Запустить сбор</a></p>
     </form>
+    <hr style="margin:1.5rem 0;border-color:#2a3544"/>
+    <h3>Агент: ключи из задачи</h3>
+    <form method="post" action="/settings/keyword-plan">
+      <label>Задача менеджера</label>
+      <textarea name="manager_task" rows="3" placeholder="Напр.: опросы HR в госсекторе, eNPS, без CRM"></textarea>
+      <label class="chk"><input type="checkbox" name="merge_extra" value="1"/> Учесть keywords_hr / keywords_cx</label>
+      <label class="chk"><input type="checkbox" name="save_keywords" value="1"/> Сразу записать в keywords.yaml</label>
+      <p style="margin-top:0.75rem"><button type="submit">Сгенерировать ключи</button></p>
+      <p class="hint">Результат — во вкладке «Задачи» (фон).</p>
+    </form>
   </div>
 
   <div class="card {_panel_visible(tab, 'agents')}">
+    <p class="hint">Инструкции для <strong>YandexGPT</strong> (HTML → JSON). Сейчас: провайдер <code>{_e(cfg.get('agent_provider', 'local'))}</code>,
+      бэкенд <code>{_e(cfg['scraper_backend'])}</code>.
+      Применяются при <a href="/settings?tab=project">Проект → yandex</a> или <code>scraper_backend=yandex</code>.
+      При <code>local</code> + <code>httpx</code> — нативный парсер ЕИС, эти тексты не используются.
+      Crawl4AI / ScrapeGraph — <code>scrape/prompts.py</code> (синхрон с Search/Enrich).</p>
+    <p class="hint">{'<span class="status-dot on"></span>Yandex API задан' if cfg.get('yandex_api_key_set') else '<span class="status-dot off"></span>Yandex API не задан — <a href="/settings?tab=apis">настроить</a> перед запуском'}</p>
     <form method="post" action="/settings/agents">
       <label>Search Agent</label>
       <textarea name="search_instructions">{agent_text('search')}</textarea>
@@ -1116,13 +1252,48 @@ def settings_page(cfg: dict, *, flash: str = "", tab: str = "project") -> str:
 
   <div class="card {_panel_visible(tab, 'run')}">
     <p class="hint"><strong>Активные ключи ({len(cfg.get('keywords_effective', []))}):</strong> {_e(', '.join(cfg.get('keywords_effective', [])))}</p>
+    <p class="hint">Бэкенд: <code>{_e(cfg['scraper_backend'])}</code>, провайдер: <code>{_e(cfg.get('agent_provider', 'local'))}</code>.
+      {'Yandex API настроен.' if cfg.get('yandex_configured') else '⚠ Yandex API <strong>не задан</strong> — при выборе yandex сбор пойдёт через <strong>httpx</strong> (ЕИС). <a href="/settings?tab=apis">Настроить API</a>.'}</p>
+    <p class="hint">Без Playwright на <code>httpx</code> работают <strong>zakupki</strong> и нативные парсеры b2b/Сбер; для JS-вёрстки:
+      <code>pip install -e '.[playwright]' &amp;&amp; playwright install chromium</code>.
+      Иначе в «Площадки» оставьте только <strong>zakupki</strong>.</p>
     <form method="post" action="/settings/run">
+      <div class="row2">
+        <div><label>Дата размещения с</label><input type="date" name="date_from"/></div>
+        <div><label>по</label><input type="date" name="date_to"/></div>
+      </div>
+      <label>Или «последние N дней» (если «с» пусто)</label>
+      <input type="number" name="period_days" value="" min="1" max="365" placeholder="напр. 30"/>
       <label>Макс. на ключ</label>
       <input type="number" name="max_per_keyword" value="10" min="1" max="50"/>
       <label class="chk"><input type="checkbox" name="skip_enrich"/> Только поиск (без обогащения карточек)</label>
-      <p class="hint">После смены ключей обязательно запустите сбор — иначе на «Тендеры» останутся старые записи из БД.</p>
+      <p class="hint">Период передаётся в ЕИС (zakupki) и отфильтровывает карточки после enrich. После смены ключей запустите сбор.</p>
       <p style="margin-top:1rem"><button type="submit">▶ Запустить пайплайн</button></p>
     </form>
+  </div>
+
+  <div class="card {_panel_visible(tab, 'jobs')}">
+    <p class="hint">Фоновые задачи платформы (Osminog). <a href="/analyst">Аналитика истории</a></p>
+    <form method="post" action="/settings/platform-job" style="margin-bottom:1rem">
+      <label>Тип задачи</label>
+      <select name="job_type">
+        <option value="link_resolve">Связи тендер ↔ ЛПР</option>
+        <option value="tender_analyst">Аналитика тендеров</option>
+        <option value="source_scout">Разведка площадки (URL ниже)</option>
+      </select>
+      <label>URL площадки (для scout)</label>
+      <input type="url" name="scout_url" placeholder="https://…"/>
+      <div class="row2">
+        <div><label>С даты</label><input type="date" name="date_from"/></div>
+        <div><label>По</label><input type="date" name="date_to"/></div>
+      </div>
+      <label>Дней назад</label>
+      <input type="number" name="period_days" value="90" min="7"/>
+      <p style="margin-top:0.75rem"><button type="submit">Поставить в очередь</button></p>
+    </form>
+    <table class="dense"><thead><tr><th>#</th><th>Тип</th><th>Статус</th><th>Создана</th></tr></thead><tbody>
+    {_platform_jobs_rows(platform_jobs or [])}
+    </tbody></table>
   </div>
 
   <div class="card {_panel_visible(tab, 'channels')}">{channels_html}</div>
@@ -1184,7 +1355,7 @@ def research_jobs_page(jobs: list) -> str:
 
 def import_excel_section() -> str:
     return """
-  <div class="card">
+  <div class="settings-section">
     <h2>Импорт из Excel / CSV</h2>
     <p class="hint">Файл до 5 МБ (.xlsx, .csv). После загрузки — превью и сопоставление колонок.</p>
     <form method="post" action="/contacts/import/upload" enctype="multipart/form-data">

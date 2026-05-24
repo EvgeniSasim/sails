@@ -20,9 +20,11 @@ from tender_agents.agents.profile_enrich_agent import (
     fetch_search_html,
 )
 from tender_agents.contacts_db import ResearchFindingInput
+from tender_agents.channels.linkedin_hint import linkedin_company_search_url
 from tender_agents.text_utils import (
     is_plausible_contact_email,
     is_plausible_contact_phone,
+    is_usable_research_url,
     name_likely_in_text,
     org_latin_slug,
     person_name_tokens,
@@ -120,22 +122,30 @@ def build_research_query(full_name: str, organization: str, position: str | None
 
 
 def guess_org_seed_hits(organization: str) -> list[SerpHit]:
-    """Если выдача недоступна (капча) — типовые URL: сайт /contact, LinkedIn company."""
+    """Если выдача недоступна (капча) — подсказки: сайт /contact, поиск LinkedIn (не /company/slug)."""
     slug = org_latin_slug(organization)
-    if not slug:
+    if not slug and not (organization or "").strip():
         return []
     hits: list[SerpHit] = []
     seen: set[str] = set()
 
     def add(url: str, title: str, score: int) -> None:
-        if url not in seen:
-            seen.add(url)
-            hits.append(SerpHit(url=url, title=title, snippet="", score=score))
+        if not is_usable_research_url(url) or url in seen:
+            return
+        seen.add(url)
+        hits.append(SerpHit(url=url, title=title, snippet="", score=score))
 
-    for host in (f"https://{slug}.ru", f"https://www.{slug}.ru"):
-        add(f"{host}/ru/contact/", f"Контакты — {organization}", 90)
-        add(f"{host}/contact/", f"Контакты — {organization}", 85)
-    add(f"https://www.linkedin.com/company/{slug}/", f"LinkedIn — {organization}", 70)
+    if slug:
+        for host in (f"https://{slug}.ru", f"https://www.{slug}.ru"):
+            add(f"{host}/ru/contact/", f"Контакты — {organization}", 90)
+            add(f"{host}/contact/", f"Контакты — {organization}", 85)
+    org = (organization or "").strip()
+    if org:
+        add(
+            linkedin_company_search_url(org),
+            f"Поиск компании в LinkedIn — {organization}",
+            55,
+        )
     return hits
 
 
@@ -160,6 +170,8 @@ def _normalize_url(href: str, base: str) -> str | None:
     if host in SKIP_NETLOCS:
         return None
     if any(url.lower().endswith(ext) for ext in (".pdf", ".zip", ".doc", ".docx", ".jpg", ".png")):
+        return None
+    if not is_usable_research_url(url):
         return None
     return url
 
@@ -334,7 +346,7 @@ async def collect_serp_hits(
             if not batch:
                 batch = _parse_generic_links(html, org_slug=org_slug, name_tokens=name_tokens)
             for h in batch:
-                if h.url not in seen:
+                if h.url not in seen and is_usable_research_url(h.url):
                     seen.add(h.url)
                     all_hits.append(h)
             if batch and not source_used:
@@ -547,6 +559,8 @@ async def run_contact_research(
 
     fetched = 0
     for hit in serp[:max_pages]:
+        if not is_usable_research_url(hit.url):
+            continue
         try:
             page_title, text = await fetch_page_text(hit.url)
             fetched += 1

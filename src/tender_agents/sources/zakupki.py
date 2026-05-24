@@ -19,8 +19,20 @@ class ZakupkiAdapter(SourceAdapter):
         }
         return f"{self.search_url}?{urlencode(params, safe='+')}"
 
-    async def search(self, keyword: str) -> list[SearchResultItem]:
-        return await parsers.zakupki.search(keyword, max_pages=1)
+    async def search(
+        self,
+        keyword: str,
+        *,
+        date_from=None,
+        date_to=None,
+        **_,
+    ) -> list[SearchResultItem]:
+        return await parsers.zakupki.search(
+            keyword,
+            max_pages=1,
+            date_from=date_from,
+            date_to=date_to,
+        )
 
     async def enrich(self, item: SearchResultItem, keyword: str) -> TenderLead:
         # Yandex-агент для обогащения; поиск остаётся бесплатным нативным парсером

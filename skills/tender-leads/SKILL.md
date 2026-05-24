@@ -48,14 +48,34 @@ export SGAI_API_KEY=...
 tender-leads run -b scrapegraph
 ```
 
+## Платформенный процесс (Osminog)
+
+```bash
+# Ключи из задачи менеджера
+tender-leads platform keyword-plan "HR eNPS госсектор" --save --merge-hr-cx
+
+# Сбор с периодом (ЕИС publishDate + фильтр после enrich)
+tender-leads run -s zakupki --period-days 30 --max-per-keyword 15
+
+# Связи тендер ↔ ЛПР, аналитика, новая площадка
+tender-leads platform link-resolve
+tender-leads platform analyst --period-days 90 -o data/analyst_report.json
+tender-leads platform scout "https://…" --save --stub
+```
+
+Дашборд: **Настройки → Запуск** (период), **Ключи** (агент), **Задачи** (очередь), **История** `/analyst`, сделка `/deal/{id}`.
+
+Документация: `docs/platform-process-osminog.md`.
+
 ## Cron (ежедневно 08:00)
 
-`scripts/daily-cron.sh` — настройте путь в crontab или скопируйте `scripts/com.openclaw.tender-leads.plist.example` в LaunchAgents.
+`scripts/daily-cron.sh` — сбор за 30 дней, экспорт CSV, связи ЛПР, подсказка для отчёта.
 
 ## OpenClaw
 
 После cron отправьте пользователю краткий отчёт:
 
-> Собрано N лидов по опросам. Новые: … CSV: data/leads_YYYYMMDD.csv
+> Собрано N лидов за 30 дней. Скор ≥60: M. CSV: data/leads_YYYYMMDD.csv
+> Связи тендер↔ЛПР пересобраны. Топ заказчиков: … (из `tender-leads platform analyst --period-days 7`)
 
-Можно вызвать `tender-leads list` и прикрепить топ-5 заказчиков.
+Можно вызвать `tender-leads list --min-score 60` и открыть `/queue` в дашборде.
