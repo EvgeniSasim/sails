@@ -25,7 +25,8 @@ crawl4ai = ["crawl4ai>=0.8.0"]
 yandex = ["openai>=1.40.0"]
 scrapegraph = []  # uses httpx + SGAI_API_KEY
 all = ["tender-lead-agents[web,playwright,crawl4ai,yandex]"]
-dev = ["pytest>=8.2.0", "ruff>=0.4.0"]
+excel = ["openpyxl>=3.1.0"]
+dev = ["pytest>=8.2.0", "pytest-asyncio>=0.23.0", "ruff>=0.4.0"]
 
 [project.scripts]
 tender-leads = "tender_agents.cli:app"
@@ -36,6 +37,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/tender_agents"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100

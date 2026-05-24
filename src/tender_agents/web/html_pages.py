@@ -234,6 +234,10 @@ def queue_page(
     keywords_effective: list | None = None,
     keywords_merge_extra: bool = False,
     current_keys_filter: bool = False,
+    date_from: str = "",
+    date_to: str = "",
+    period: str = "",
+    filtered_count: int = 0,
 ) -> str:
     headers = _queue_sort_headers(sort=sort, order=order, query=filter_query)
     kw_list = keywords_effective or []
@@ -269,6 +273,14 @@ def queue_page(
       <select name="channel">{channel_options}</select>
       <label class="chk" style="display:inline-flex;margin:0"><input type="checkbox" name="hot_only" value="1"{" checked" if hot_only else ""}/> горячие</label>
       <label class="chk" style="display:inline-flex;margin:0"><input type="checkbox" name="current_keys" value="1"{ck}/> только текущие ключи</label>
+      <input type="date" name="date_from" value="{_e(date_from)}" title="Дата с"/>
+      <input type="date" name="date_to" value="{_e(date_to)}" title="Дата по"/>
+      <select name="period">
+        <option value="">Период…</option>
+        <option value="7d"{" selected" if period == "7d" else ""}>7 дней</option>
+        <option value="30d"{" selected" if period == "30d" else ""}>30 дней</option>
+        <option value="quarter"{" selected" if period == "quarter" else ""}>Квартал</option>
+      </select>
       <input type="hidden" name="sort" value="{_e(sort)}"/>
       <input type="hidden" name="order" value="{_e(order)}"/>
       <button type="submit">Фильтр</button>
@@ -280,7 +292,8 @@ def queue_page(
     <a href="/api/export" class="btn secondary">CSV</a>
     <a href="/settings?tab=run" class="btn secondary">Сбор</a>
   </div>
-  <p class="hint">Поиск и лимит применяются в БД до сортировки. Дедлайн — по календарю (дд.мм.гггг). Фильтр «Только тендеры» / «Все записи» — если в БД остались старые смешанные строки.</p>
+  <p class="hint">Поиск и лимит применяются в БД до сортировки. Дедлайн — по календарю (дд.мм.гггг). Фильтр «Только тендеры» / «Все записи» — если в БД остались старые смешанные строки.{" Показано: <strong>" + str(filtered_count) + "</strong>." if filtered_count else ""}</p>
+  <p><a href="/queue" class="btn secondary">Очередь менеджера</a> <a href="/research/jobs" class="btn secondary">Капча / задачи</a></p>
   <table>
     <thead>{headers}</thead>
     <tbody>{rows}</tbody>
@@ -650,6 +663,10 @@ def contacts_list_page(
       <button type="submit">Фильтр</button>
     </form>
     <a href="/settings?tab=channels" class="btn secondary">Импорт СМИ</a>
+    <form method="post" action="/contacts/import/upload" enctype="multipart/form-data" style="display:inline">
+      <input type="file" name="file" accept=".xlsx,.csv" required/>
+      <button type="submit" class="btn secondary">Excel/CSV</button>
+    </form>
     <a href="/" class="btn secondary">← Тендеры</a>
   </div>
   <div class="toolbar-actions">
@@ -695,7 +712,30 @@ def _contact_tender_links_block(tender_links: list) -> str:
   </div>"""
 
 
-def contact_detail_page(p, *, flash: str = "", tender_links: list | None = None) -> str:
+def _event_appearances_table(apps: list) -> str:
+    event_types = {"conference", "exhibition", "talk", "interview", "rating", "article", "event"}
+    rows = []
+    for a in apps:
+        t = (a.appearance_type or a.source_kind or "").replace("web_", "")
+        if t not in event_types and (a.source_kind or "") not in ("manual", "import_excel"):
+            continue
+        rows.append(
+            f"<tr><td>{_dt_fmt(a.appeared_at)}</td><td>{_e(t)}</td>"
+            f"<td>{_e((a.source_title or '')[:120])}</td>"
+            f"<td>{_e((a.snippet or '')[:80])}</td>"
+            f"<td><a href='{_e(a.source_url)}' target='_blank' rel='noopener'>↗</a></td></tr>"
+        )
+    if not rows:
+        return "<p class='hint'>Пока нет мероприятий — добавьте вручную или импортируйте из Excel.</p>"
+    return (
+        "<table class='dense'><thead><tr><th>Дата</th><th>Тип</th><th>Название</th>"
+        "<th>Место / заметка</th><th>Ссылка</th></tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table>"
+    )
+
+
+def contact_detail_page(p, *, flash: str = "", tender_links: list | None = None, research_job=None) -> str:
     media_apps = [a for a in p.appearances if (a.source_kind or "") == "kommersant_open"]
     web_apps = [a for a in p.appearances if (a.source_kind or "").startswith("web_")]
     media_block = _appearances_section_html(
@@ -710,12 +750,37 @@ def contact_detail_page(p, *, flash: str = "", tender_links: list | None = None)
     )
     qcls = f"qual-{_e(p.data_quality)}" if p.data_quality else "qual-partial"
     tlinks = _contact_tender_links_block(tender_links or [])
+    compliance_banner = (
+        '<p class="hint" style="background:#fef3c7;padding:0.5rem 0.75rem;border-radius:6px">'
+        "Данные только из открытых источников; перед КП подтвердите канал кнопкой ниже.</p>"
+    )
+    verified = ""
+    if getattr(p, "channel_verified_at", None):
+        verified = f"<p class='hint'>Канал проверен: {_dt_fmt(p.channel_verified_at)}</p>"
+    captcha_block = ""
+    if research_job and getattr(research_job, "status", "") in ("needs_captcha", "needs_manual"):
+        url = _e(research_job.challenge_url or "")
+        captcha_block = f"""
+    <div class="card" style="border-color:#f59e0b">
+      <h2>Нужна капча</h2>
+      <p>{_e(research_job.instructions or '')}</p>
+      <p><a href="{url}" target="_blank" rel="noopener" class="btn secondary">Открыть страницу поиска</a></p>
+      <form method="post" action="/contact/research/{research_job.id}/resume" enctype="multipart/form-data">
+        <label>Cookie (опционально)</label>
+        <textarea name="cookies_text" rows="2" placeholder="sessionid=…"></textarea>
+        <label>HTML страницы после капчи</label>
+        <input type="file" name="html_upload" accept=".html,.htm"/>
+        <button type="submit">Я прошёл капчу — продолжить</button>
+      </form>
+    </div>"""
+    bio_val = _e(getattr(p, "bio", None) or "")
+    events_tbl = _event_appearances_table(p.appearances)
     research = ""
     if p.id:
         research = (
             f'<div class="card"><h2>Исследование в сети</h2>'
             f"<p class='hint'>Запрос как вручную: «ФИО + компания + контакт email». "
-            f"Выдача: Brave → Яндекс → DuckDuckGo; если капча — сайт компании (напр. nanolek.ru/contact) и LinkedIn.</p>"
+            f"Выдача: Brave → Яндекс → DuckDuckGo; при капче — форма ниже.</p>"
             f'<p style="margin-top:0.75rem">'
             f'<form method="post" action="/contact/{p.id}/research" style="display:inline">'
             f'<button type="submit">Исследовать в сети</button></form> '
@@ -726,8 +791,11 @@ def contact_detail_page(p, *, flash: str = "", tender_links: list | None = None)
             f"</p></div>"
         )
     body = f"""
+  {compliance_banner}
   <h1>{_e(p.full_name)}</h1>
   <p class="meta">{_e(p.organization)} · {_e(p.position or 'должность не указана')}</p>
+  {verified}
+  {captcha_block}
   <p>Актуальность данных: <span class="{qcls}"><strong>{_e(_QUAL_RU.get(p.data_quality, p.data_quality))}</strong></span>
      · последнее появление: <strong>{_dt_fmt(p.last_seen_at)}</strong>
      · упоминаний: <strong>{p.appearance_count}</strong></p>
@@ -740,11 +808,42 @@ def contact_detail_page(p, *, flash: str = "", tender_links: list | None = None)
       <p>Telegram: {_e(p.telegram or '—')}</p>
       <p>VK: {_e(p.vk or '—')}</p>
       <p>{_contact_channels_cell(p)}</p>
+      <form method="post" action="/contact/{p.id}/verify-channel" style="margin-top:1rem">
+        <button type="submit" class="btn secondary">Канал проверен</button>
+      </form>
+    </div>
+    <div class="card">
+      <h2>Описание</h2>
+      <form method="post" action="/contact/{p.id}/bio">
+        <textarea name="bio" rows="5" style="width:100%">{bio_val}</textarea>
+        <p style="margin-top:0.5rem"><button type="submit">Сохранить описание</button></p>
+      </form>
     </div>
     <div class="card">
       <h2>Заметки</h2>
       <p class="hint">{_e(p.notes or '—')}</p>
     </div>
+  </div>
+  <div class="card">
+    <h2>Мероприятия и выступления</h2>
+    {events_tbl}
+    <form method="post" action="/contact/{p.id}/appearance" style="margin-top:1rem">
+      <label>Тип</label>
+      <select name="appearance_type">
+        <option value="conference">Конференция</option>
+        <option value="exhibition">Выставка</option>
+        <option value="talk">Доклад</option>
+        <option value="interview">Интервью</option>
+        <option value="event">Другое</option>
+      </select>
+      <label>Название</label>
+      <input name="source_title" required/>
+      <label>Ссылка</label>
+      <input name="source_url" type="url"/>
+      <label>Место / дата (текст)</label>
+      <input name="snippet"/>
+      <button type="submit">Добавить мероприятие</button>
+    </form>
   </div>
   <div class="card">
     <h2>Импорт из СМИ / рейтингов</h2>
@@ -1033,3 +1132,106 @@ def settings_page(cfg: dict, *, flash: str = "", tab: str = "project") -> str:
   <div class="card {_panel_visible(tab, 'channels')}">{channels_html}</div>
 """
     return _layout("Настройки", nav_active, body, flash=flash)
+
+
+def manager_queue_page(*, tab: str, hot_leads: list, contacts: list, linked_rows: list[str]) -> str:
+    hot_rows = "".join(
+        f"<tr><td><span class='score {_score_class(l.score)}'>{l.score}</span></td>"
+        f"<td><a href='/lead/{l.id}'>{_e(l.title[:100])}</a></td>"
+        f"<td>{_e((l.customer_name or '')[:60])}</td>"
+        f"<td>{_e(l.end_date or '—')}</td></tr>"
+        for l in hot_leads
+        if l.id
+    ) or "<tr><td colspan='4'>Нет горячих тендеров за 30 дней</td></tr>"
+    contact_rows = "".join(
+        f"<tr><td><a href='/contact/{p.id}'>{_e(p.full_name)}</a></td>"
+        f"<td>{_e(p.organization[:50])}</td>"
+        f"<td>{_e(p.email or '—')}</td>"
+        f"<td>{'✓' if getattr(p, 'channel_verified_at', None) else '—'}</td></tr>"
+        for p in contacts
+        if p.id
+    ) or "<tr><td colspan='4'>Нет контактов с e-mail</td></tr>"
+    linked = (
+        "<table class='dense'><thead><tr><th>Контакт</th><th>Организация</th><th>Тендеров</th></tr></thead>"
+        f"<tbody>{''.join(linked_rows)}</tbody></table>"
+        if linked_rows
+        else "<p class='hint'>Нет подтверждённых связей</p>"
+    )
+    body = f"""
+  <h1>Очередь менеджера</h1>
+  <p class="meta"><a href="/">← Тендеры</a> · <a href="/contacts">Контакты</a></p>
+  <div class="card"><h2>Горячие тендеры (≥60, 30 дней)</h2>
+    <table class="dense"><thead><tr><th>Скор</th><th>Тендер</th><th>Заказчик</th><th>Дедлайн</th></tr></thead>
+    <tbody>{hot_rows}</tbody></table></div>
+  <div class="card"><h2>ЛПР с e-mail</h2>
+    <table class="dense"><thead><tr><th>ФИО</th><th>Компания</th><th>E-mail</th><th>Проверен</th></tr></thead>
+    <tbody>{contact_rows}</tbody></table></div>
+  <div class="card"><h2>Связанные (подтверждено)</h2>{linked}</div>"""
+    return _layout("Очередь", "tenders", body)
+
+
+def research_jobs_page(jobs: list) -> str:
+    rows = []
+    for j in jobs:
+        rows.append(
+            f"<tr><td>{j.id}</td><td><a href='/contact/{j.profile_id}'>#{j.profile_id}</a></td>"
+            f"<td>{_e(j.status)}</td><td>{_e(j.search_engine or '')}</td>"
+            f"<td><a href='{_e(j.challenge_url or '')}' target='_blank'>↗</a></td></tr>"
+        )
+    table = (
+        "<table><thead><tr><th>Job</th><th>Контакт</th><th>Статус</th><th>Движок</th><th>URL</th></tr></thead>"
+        f"<tbody>{''.join(rows) or '<tr><td colspan=5>Нет задач с капчей</td></tr>'}</tbody></table>"
+    )
+    body = f"<h1>Задачи исследования (капча)</h1>{table}<p><a href='/contacts'>← Контакты</a></p>"
+    return _layout("Капча", "contacts", body)
+
+
+def import_preview_page(headers: list[str], rows: list[dict], mapping: dict) -> str:
+    import json
+
+    opts = {
+        "full_name": "ФИО",
+        "organization": "Организация",
+        "position": "Должность",
+        "email": "E-mail",
+        "phone": "Телефон",
+        "event_title": "Мероприятие",
+        "event_date": "Дата",
+        "notes": "Заметки",
+    }
+    map_rows = []
+    for h in headers:
+        cur = mapping.get(h) or ""
+        opts_html = '<option value="">—</option>' + "".join(
+            f'<option value="{k}"{" selected" if cur == k else ""}>{_e(lbl)}</option>'
+            for k, lbl in opts.items()
+        )
+        map_rows.append(
+            f"<tr><td>{_e(h)}</td><td><select name='col_{_e(h)}' form='commit-form'>{opts_html}</select></td></tr>"
+        )
+    preview = "<table class='dense'><thead><tr>" + "".join(f"<th>{_e(h)}</th>" for h in headers) + "</tr></thead><tbody>"
+    for r in rows:
+        preview += "<tr>" + "".join(f"<td>{_e(str(r.get(h, ''))[:40])}</td>" for h in headers) + "</tr>"
+    preview += "</tbody></table>"
+    mapping_js = json.dumps(mapping, ensure_ascii=False)
+    body = f"""
+  <h1>Импорт контактов</h1>
+  <p class="hint">Проверьте сопоставление колонок и нажмите «Импортировать».</p>
+  <div class="card"><h2>Колонки</h2><table>{''.join(map_rows)}</table></div>
+  <div class="card"><h2>Превью</h2>{preview}</div>
+  <form id="commit-form" method="post" action="/contacts/import/commit">
+    <input type="hidden" name="mapping_json" id="mapping_json" value='{_e(mapping_js)}'/>
+    <button type="submit" onclick="collectMapping()">Импортировать</button>
+  </form>
+  <script>
+  function collectMapping() {{
+    const m = {mapping_js};
+    document.querySelectorAll('select[form=commit-form]').forEach(sel => {{
+      const h = sel.name.replace('col_', '');
+      m[h] = sel.value || null;
+    }});
+    document.getElementById('mapping_json').value = JSON.stringify(m);
+  }}
+  </script>
+  <p><a href="/contacts">← Отмена</a></p>"""
+    return _layout("Импорт", "contacts", body)

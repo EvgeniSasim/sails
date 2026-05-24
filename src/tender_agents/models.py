@@ -127,6 +127,8 @@ class ContactProfile(BaseModel):
     vk: str | None = None
     social_json: dict | None = None
     notes: str | None = None
+    bio: str | None = None
+    channel_verified_at: datetime | None = None
     first_seen_at: datetime | None = None
     last_seen_at: datetime | None = None
     appearance_count: int = 0

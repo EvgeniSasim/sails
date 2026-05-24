@@ -43,6 +43,8 @@ class ContactProfileRow(Base):
     vk: Mapped[str | None] = mapped_column(String(256))
     social_json: Mapped[dict | None] = mapped_column(JSON)
     notes: Mapped[str | None] = mapped_column(Text)
+    bio: Mapped[str | None] = mapped_column(Text)
+    channel_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     appearance_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -71,6 +73,11 @@ class ContactAppearanceRow(Base):
 APPEARANCE_MIGRATION_COLUMNS = [
     ("appearance_type", "VARCHAR(32) DEFAULT ''"),
     ("meta_json", "TEXT"),
+]
+
+PROFILE_MIGRATION_COLUMNS = [
+    ("bio", "TEXT"),
+    ("channel_verified_at", "DATETIME"),
 ]
 
 
@@ -183,6 +190,8 @@ def _row_to_profile(row: ContactProfileRow, *, appearances: list[ContactAppearan
         vk=row.vk,
         social_json=row.social_json,
         notes=row.notes,
+        bio=getattr(row, "bio", None),
+        channel_verified_at=getattr(row, "channel_verified_at", None),
         first_seen_at=row.first_seen_at,
         last_seen_at=row.last_seen_at,
         appearance_count=row.appearance_count or 0,
@@ -218,6 +227,19 @@ class ContactRepository:
                     try:
                         sync_conn.execute(
                             text(f"ALTER TABLE contact_appearances ADD COLUMN {col} {ddl}")
+                        )
+                    except Exception:
+                        pass
+
+            await conn.run_sync(run)
+
+    async def migrate_profile_columns(self) -> None:
+        async with self._engine.begin() as conn:
+            def run(sync_conn):
+                for col, ddl in PROFILE_MIGRATION_COLUMNS:
+                    try:
+                        sync_conn.execute(
+                            text(f"ALTER TABLE contact_profiles ADD COLUMN {col} {ddl}")
                         )
                     except Exception:
                         pass
@@ -711,6 +733,104 @@ class ContactRepository:
                 prev = (row.notes or "").strip()
                 row.notes = (prev + "\n" + notes_append.strip()).strip()[:4000]
             row.last_enriched_at = now
+            await session.commit()
+            return True
+
+    async def upsert_profile(self, profile: ContactProfile) -> tuple[int, bool]:
+        """Вставка или слияние по dedup_key. Возвращает (id, is_new)."""
+        now = datetime.now(timezone.utc)
+        org = (profile.organization or "").strip() or "—"
+        name = (profile.full_name or "").strip()
+        if not name:
+            raise ValueError("full_name required")
+        dk = _dedup_key(org, name)
+        async with self._session_factory() as session:
+            r = await session.execute(select(ContactProfileRow).where(ContactProfileRow.dedup_key == dk))
+            row = r.scalar_one_or_none()
+            is_new = row is None
+            if row:
+                if profile.position and not row.position:
+                    row.position = profile.position[:512]
+                if profile.email and not row.email:
+                    row.email = profile.email[:256]
+                if profile.phone and not row.phone:
+                    row.phone = profile.phone[:128]
+                if profile.notes:
+                    prev = (row.notes or "").strip()
+                    row.notes = (prev + "\n" + profile.notes.strip()).strip()[:4000] if prev else profile.notes[:4000]
+                row.last_seen_at = now
+            else:
+                row = ContactProfileRow(
+                    dedup_key=dk,
+                    organization=org[:512],
+                    full_name=name[:256],
+                    position=(profile.position or "")[:512] or None,
+                    email=(profile.email or "")[:256] or None,
+                    phone=(profile.phone or "")[:128] or None,
+                    linkedin_url=profile.linkedin_url,
+                    linkedin_search_url=profile.linkedin_search_url,
+                    yandex_search_url=profile.yandex_search_url,
+                    telegram=profile.telegram,
+                    vk=profile.vk,
+                    social_json=profile.social_json,
+                    notes=(profile.notes or "")[:4000] or None,
+                    first_seen_at=now,
+                    last_seen_at=now,
+                    appearance_count=0,
+                )
+                session.add(row)
+                await session.flush()
+            await session.commit()
+            await session.refresh(row)
+            return int(row.id), is_new
+
+    async def update_bio(self, profile_id: int, bio: str) -> bool:
+        async with self._session_factory() as session:
+            row = await session.get(ContactProfileRow, profile_id)
+            if not row:
+                return False
+            row.bio = (bio or "").strip()[:8000] or None
+            await session.commit()
+            return True
+
+    async def verify_channel(self, profile_id: int) -> bool:
+        async with self._session_factory() as session:
+            row = await session.get(ContactProfileRow, profile_id)
+            if not row:
+                return False
+            row.channel_verified_at = datetime.now(timezone.utc)
+            await session.commit()
+            return True
+
+    async def add_manual_appearance(
+        self,
+        profile_id: int,
+        *,
+        appearance_type: str,
+        source_title: str,
+        source_url: str = "",
+        appeared_at: datetime | None = None,
+        snippet: str | None = None,
+    ) -> bool:
+        now = datetime.now(timezone.utc)
+        async with self._session_factory() as session:
+            row = await session.get(ContactProfileRow, profile_id)
+            if not row:
+                return False
+            session.add(
+                ContactAppearanceRow(
+                    profile_id=profile_id,
+                    appeared_at=appeared_at or now,
+                    source_kind="manual",
+                    source_url=(source_url or "").strip()[:2000] or f"manual://{profile_id}",
+                    source_title=(source_title or "")[:500],
+                    snippet=(snippet or "")[:2000] or None,
+                    appearance_type=(appearance_type or "event")[:32],
+                    meta_json={"from": "manager"},
+                )
+            )
+            row.appearance_count = (row.appearance_count or 0) + 1
+            row.last_seen_at = max(_as_utc(row.last_seen_at) or now, appeared_at or now)
             await session.commit()
             return True
 

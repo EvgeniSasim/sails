@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import JSON, DateTime, Integer, String, Text, and_, case, delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -139,6 +139,8 @@ class LeadFilters:
         q: str = "",
         channel: str | None = None,
         matched_keywords: list[str] | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
     ):
         self.min_score = min_score
         self.segment = segment
@@ -149,6 +151,8 @@ class LeadFilters:
         self.q = q
         self.channel = channel
         self.matched_keywords = [k.strip() for k in (matched_keywords or []) if k.strip()]
+        self.date_from = date_from
+        self.date_to = date_to
 
 
 class LeadRepository:
@@ -160,6 +164,8 @@ class LeadRepository:
         self._session_factory = session_factory
         self._engine = engine
         self._contacts_repo = None
+        self._research_jobs = None
+        self._provenance = None
 
     def contacts_repo(self):
         if self._contacts_repo is None:
@@ -168,13 +174,32 @@ class LeadRepository:
             self._contacts_repo = cdb.ContactRepository(self._session_factory, self._engine)
         return self._contacts_repo
 
+    def research_jobs(self):
+        if self._research_jobs is None:
+            from tender_agents.research.jobs import ResearchJobRepository
+
+            self._research_jobs = ResearchJobRepository(self._session_factory, self._engine)
+        return self._research_jobs
+
+    def provenance(self):
+        if self._provenance is None:
+            from tender_agents.compliance import ProvenanceRepository
+
+            self._provenance = ProvenanceRepository(self._session_factory, self._engine)
+        return self._provenance
+
     async def init(self) -> None:
-        import tender_agents.contacts_db  # noqa: F401 — регистрация таблиц на Base.metadata
+        import tender_agents.compliance  # noqa: F401
+        import tender_agents.contacts_db  # noqa: F401
+        import tender_agents.research.jobs  # noqa: F401
 
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
             await self._migrate(conn)
         await self.contacts_repo().migrate_appearance_columns()
+        await self.contacts_repo().migrate_profile_columns()
+        await self.research_jobs().ensure_tables()
+        await self.provenance().ensure_tables()
         await self.contacts_repo().backfill_open_media_from_leads_if_needed()
 
     async def _migrate(self, conn) -> None:
@@ -279,6 +304,44 @@ class LeadRepository:
                     func.lower(LeadRow.context_title).like(pat, escape="\\"),
                 )
             )
+        if flt.date_from or flt.date_to:
+            query = self._apply_date_range(query, flt.date_from, flt.date_to)
+        return query
+
+    @staticmethod
+    def _publish_date_iso_expr():
+        return case(
+            (
+                and_(
+                    LeadRow.publish_date.isnot(None),
+                    func.length(LeadRow.publish_date) >= 10,
+                    func.substr(LeadRow.publish_date, 5, 1) == "-",
+                ),
+                func.substr(LeadRow.publish_date, 1, 10),
+            ),
+            (
+                and_(
+                    LeadRow.publish_date.isnot(None),
+                    func.length(LeadRow.publish_date) == 10,
+                    func.substr(LeadRow.publish_date, 3, 1) == ".",
+                ),
+                func.concat(
+                    func.substr(LeadRow.publish_date, 7, 4),
+                    "-",
+                    func.substr(LeadRow.publish_date, 4, 2),
+                    "-",
+                    func.substr(LeadRow.publish_date, 1, 2),
+                ),
+            ),
+            else_=func.strftime("%Y-%m-%d", LeadRow.created_at),
+        )
+
+    def _apply_date_range(self, query, date_from: date | None, date_to: date | None):
+        iso = self._publish_date_iso_expr()
+        if date_from:
+            query = query.where(iso >= date_from.isoformat())
+        if date_to:
+            query = query.where(iso <= date_to.isoformat())
         return query
 
     @staticmethod

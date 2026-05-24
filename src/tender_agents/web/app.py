@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote, urlencode
 
-from fastapi import BackgroundTasks, FastAPI, Form, Query
+from fastapi import BackgroundTasks, FastAPI, File, Form, Query, UploadFile
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 from tender_agents.contacts_db import ContactListFilters
@@ -119,6 +120,9 @@ async def dashboard(
     min_score: int = Query(0),
     hot_only: str = Query(""),
     current_keys: str = Query(""),
+    date_from: str = Query(""),
+    date_to: str = Query(""),
+    period: str = Query(""),
     channel: str = Query("tender"),
     sort: str = Query("score"),
     order: str = Query("desc"),
@@ -133,6 +137,28 @@ async def dashboard(
 
     if hot_only:
         min_score = max(min_score, 60)
+
+    d_from: date | None = None
+    d_to: date | None = None
+    if period == "7d":
+        d_to = date.today()
+        d_from = d_to - timedelta(days=7)
+    elif period == "30d":
+        d_to = date.today()
+        d_from = d_to - timedelta(days=30)
+    elif period == "quarter":
+        d_to = date.today()
+        d_from = d_to - timedelta(days=92)
+    elif date_from:
+        try:
+            d_from = date.fromisoformat(date_from[:10])
+        except ValueError:
+            d_from = None
+    if date_to and not d_to:
+        try:
+            d_to = date.fromisoformat(date_to[:10])
+        except ValueError:
+            d_to = None
 
     allowed_sort = {
         "score",
@@ -165,6 +191,12 @@ async def dashboard(
         filter_params["hot_only"] = "1"
     if current_keys:
         filter_params["current_keys"] = "1"
+    if d_from:
+        filter_params["date_from"] = d_from.isoformat()
+    if d_to:
+        filter_params["date_to"] = d_to.isoformat()
+    if period:
+        filter_params["period"] = period
     if ch == "all":
         filter_params["channel"] = "all"
     filter_query = urlencode(filter_params)
@@ -191,6 +223,8 @@ async def dashboard(
         q=q,
         channel=ch_filter,
         matched_keywords=active_kw,
+        date_from=d_from,
+        date_to=d_to,
     )
     leads = await repo.list_filtered(flt, limit=limit, sort_by=sort, order=order)
     stats = await repo.stats(channel=ch_filter)
@@ -221,7 +255,49 @@ async def dashboard(
         keywords_effective=kw_setup["effective"],
         keywords_merge_extra=kw_setup["merge_extra"],
         current_keys_filter=bool(current_keys),
+        date_from=d_from.isoformat() if d_from else "",
+        date_to=d_to.isoformat() if d_to else "",
+        period=period,
+        filtered_count=len(leads),
     )
+    return HTMLResponse(html)
+
+
+@app.get("/queue", response_class=HTMLResponse)
+async def manager_queue(
+    tab: str = Query("hot"),
+    ready: str = Query(""),
+):
+    from tender_agents.web.html_pages import manager_queue_page
+
+    repo = create_repository()
+    await repo.init()
+    hot = await repo.list_filtered(
+        LeadFilters(min_score=60, channel="tender", date_from=date.today() - timedelta(days=30)),
+        limit=80,
+        sort_by="urgency",
+    )
+    cr = repo.contacts_repo()
+    cflt = ContactListFilters(has_email=True)
+    if ready:
+        profiles = await cr.list_profiles(cflt, limit=80)
+        profiles = [p for p in profiles if getattr(p, "channel_verified_at", None)]
+    else:
+        profiles = await cr.list_profiles(cflt, limit=80)
+    linked_rows: list[str] = []
+    for p in profiles[:40]:
+        if not p.id:
+            continue
+        tlinks = await cr.list_tender_contact_links_for_contact(p.id)
+        confirmed = [t for t in tlinks if (t.get("status") or "") == "confirmed"]
+        if not confirmed:
+            continue
+        linked_rows.append(
+            f"<tr><td><a href='/contact/{p.id}'>{_e(p.full_name)}</a></td>"
+            f"<td>{_e(p.organization[:60])}</td>"
+            f"<td>{len(confirmed)}</td></tr>"
+        )
+    html = manager_queue_page(tab=tab, hot_leads=hot, contacts=profiles, linked_rows=linked_rows)
     return HTMLResponse(html)
 
 
@@ -401,22 +477,176 @@ async def contact_detail_view(contact_id: int, flash: str = Query("")):
             status_code=404,
         )
     tlinks = await repo.contacts_repo().list_tender_contact_links_for_contact(contact_id)
-    return HTMLResponse(contact_detail_page(p, flash=flash, tender_links=tlinks))
+    job = await repo.research_jobs().latest_for_profile(contact_id)
+    return HTMLResponse(contact_detail_page(p, flash=flash, tender_links=tlinks, research_job=job))
 
 
 @app.post("/contact/{contact_id}/research")
-async def contact_research_post(contact_id: int):
+async def contact_research_post(contact_id: int, background_tasks: BackgroundTasks):
     repo = create_repository()
     await repo.init()
-    try:
-        from tender_agents.agents.contact_research_agent import report_summary, run_contact_research
+    p = await repo.contacts_repo().get_by_id(contact_id, with_appearances=False)
+    if not p:
+        return RedirectResponse("/contacts", status_code=303)
+    from tender_agents.agents.contact_research_agent import build_research_queries, execute_research_job
 
-        report = await run_contact_research(repo, contact_id)
-        msg = report_summary(report)
-    except Exception as e:
-        logger.exception("contact research %s", contact_id)
-        msg = "ERR:" + str(e)[:500]
-    return RedirectResponse(f"/contact/{contact_id}?flash=" + quote(msg), status_code=303)
+    q = build_research_queries(p.full_name, p.organization, p.position)[0]
+    job = await repo.research_jobs().create_job(contact_id, q)
+
+    async def _bg():
+        r = create_repository()
+        await r.init()
+        try:
+            await execute_research_job(r, job.id)
+        except Exception:
+            logger.exception("research job %s", job.id)
+
+    background_tasks.add_task(_bg)
+    return RedirectResponse(
+        f"/contact/{contact_id}?flash=" + quote("Исследование запущено (job #%s) — обновите страницу." % job.id),
+        status_code=303,
+    )
+
+
+@app.get("/contact/{contact_id}/research/status", response_class=PlainTextResponse)
+async def contact_research_status(contact_id: int):
+    repo = create_repository()
+    await repo.init()
+    job = await repo.research_jobs().latest_for_profile(contact_id)
+    if not job:
+        return PlainTextResponse("no job")
+    return PlainTextResponse(f"{job.status}|{job.error or ''}")
+
+
+@app.post("/contact/research/{job_id}/resume")
+async def contact_research_resume(
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    cookies_text: Annotated[str, Form()] = "",
+    html_upload: UploadFile | None = File(None),
+):
+    repo = create_repository()
+    await repo.init()
+    job = await repo.research_jobs().get_job(job_id)
+    if not job:
+        return RedirectResponse("/contacts?flash=" + quote("ERR:задача не найдена"), status_code=303)
+    html_len = 0
+    if html_upload and html_upload.filename:
+        raw = await html_upload.read()
+        html_len = len(raw)
+        imp_dir = Path("data") / "imports"
+        imp_dir.mkdir(parents=True, exist_ok=True)
+        (imp_dir / f"captcha_{job_id}.html").write_bytes(raw[:5_000_000])
+    await repo.research_jobs().update_job(
+        job_id,
+        status="pending",
+        result={"resume_cookies": cookies_text[:4000], "resume_html_len": html_len},
+    )
+
+    async def _bg():
+        r = create_repository()
+        await r.init()
+        from tender_agents.agents.contact_research_agent import execute_research_job
+
+        await execute_research_job(r, job_id)
+
+    background_tasks.add_task(_bg)
+    return RedirectResponse(
+        f"/contact/{job.profile_id}?flash=" + quote("Продолжаем исследование…"),
+        status_code=303,
+    )
+
+
+@app.get("/research/jobs", response_class=HTMLResponse)
+async def research_jobs_list():
+    from tender_agents.web.html_pages import research_jobs_page
+
+    repo = create_repository()
+    await repo.init()
+    jobs = await repo.research_jobs().list_needs_captcha()
+    return HTMLResponse(research_jobs_page(jobs))
+
+
+@app.post("/contact/{contact_id}/bio")
+async def contact_bio_save(contact_id: int, bio: Annotated[str, Form()] = ""):
+    repo = create_repository()
+    await repo.init()
+    await repo.contacts_repo().update_bio(contact_id, bio)
+    return RedirectResponse(f"/contact/{contact_id}?flash=" + quote("Описание сохранено"), status_code=303)
+
+
+@app.post("/contact/{contact_id}/appearance")
+async def contact_appearance_add(
+    contact_id: int,
+    appearance_type: Annotated[str, Form()],
+    source_title: Annotated[str, Form()],
+    source_url: Annotated[str, Form()] = "",
+    snippet: Annotated[str, Form()] = "",
+):
+    repo = create_repository()
+    await repo.init()
+    await repo.contacts_repo().add_manual_appearance(
+        contact_id,
+        appearance_type=appearance_type or "event",
+        source_title=source_title,
+        source_url=source_url,
+        snippet=snippet or None,
+    )
+    return RedirectResponse(f"/contact/{contact_id}?flash=" + quote("Мероприятие добавлено"), status_code=303)
+
+
+@app.post("/contact/{contact_id}/verify-channel")
+async def contact_verify_channel(contact_id: int):
+    repo = create_repository()
+    await repo.init()
+    await repo.contacts_repo().verify_channel(contact_id)
+    return RedirectResponse(
+        f"/contact/{contact_id}?flash=" + quote("Канал отмечен как проверенный"),
+        status_code=303,
+    )
+
+
+@app.post("/contacts/import/upload")
+async def contacts_import_upload(file: UploadFile = File(...)):
+    from tender_agents.import.excel_import import parse_workbook, suggest_mapping
+    from tender_agents.web.html_pages import import_preview_page
+
+    raw = await file.read()
+    if len(raw) > 5_000_000:
+        return RedirectResponse("/contacts?flash=" + quote("ERR:файл больше 5 МБ"), status_code=303)
+    headers, rows = parse_workbook(raw, filename=file.filename or "")
+    mapping = suggest_mapping(headers, rows[:10])
+    imp_dir = Path("data") / "imports"
+    imp_dir.mkdir(parents=True, exist_ok=True)
+    stash = imp_dir / "last_upload.bin"
+    stash.write_bytes(raw)
+    meta_path = imp_dir / "last_upload.meta"
+    meta_path.write_text(file.filename or "upload.xlsx", encoding="utf-8")
+    return HTMLResponse(import_preview_page(headers, rows[:10], mapping))
+
+
+@app.post("/contacts/import/commit")
+async def contacts_import_commit(
+    mapping_json: Annotated[str, Form()],
+):
+    import json
+
+    from tender_agents.import.excel_import import apply_mapping, parse_workbook
+
+    imp_dir = Path("data") / "imports"
+    stash = imp_dir / "last_upload.bin"
+    meta_path = imp_dir / "last_upload.meta"
+    if not stash.is_file():
+        return RedirectResponse("/contacts?flash=" + quote("ERR:нет загруженного файла"), status_code=303)
+    raw = stash.read_bytes()
+    fn = meta_path.read_text(encoding="utf-8") if meta_path.is_file() else ""
+    _, rows = parse_workbook(raw, filename=fn)
+    mapping = json.loads(mapping_json)
+    repo = create_repository()
+    await repo.init()
+    stats = await apply_mapping(repo.contacts_repo(), rows, mapping)
+    msg = "Импорт: новых %(imported)s, обновлено %(merged)s, событий %(events)s" % stats
+    return RedirectResponse("/contacts?flash=" + quote(msg), status_code=303)
 
 
 @app.post("/contact/{contact_id}/sanitize-channels")

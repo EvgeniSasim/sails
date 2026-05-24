@@ -85,6 +85,9 @@ class ResearchReport:
     channels_updated: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     serp_source: str = ""
+    needs_captcha: bool = False
+    captcha_url: str = ""
+    captcha_engine: str = ""
 
 
 def build_research_queries(full_name: str, organization: str, position: str | None) -> list[str]:
@@ -314,12 +317,14 @@ async def collect_serp_hits(
     all_hits: list[SerpHit] = []
     seen: set[str] = set()
     source_used = ""
+    last_captcha: tuple[str, str] | None = None
 
     for name, u in engines:
         try:
             html = await _fetch_serp_html(u)
             if _is_blocked_serp(html):
                 logger.info("serp blocked (%s): %s", name, u[:70])
+                last_captcha = (name, u)
                 continue
             batch: list[SerpHit] = []
             if "yandex" in name:
@@ -345,7 +350,8 @@ async def collect_serp_hits(
         if seeds:
             all_hits = seeds
             source_used = "org_seed"
-    return all_hits[:MAX_SERP_HITS], source_used
+    captcha = last_captcha if not all_hits and last_captcha else None
+    return all_hits[:MAX_SERP_HITS], source_used, captcha
 
 
 def _extract_main_text(soup: BeautifulSoup) -> str:
@@ -413,10 +419,14 @@ def _is_org_contact_url(url: str) -> bool:
 
 
 async def fetch_page_text(url: str) -> tuple[str, str]:
-    async with httpx.AsyncClient(headers=HEADERS, timeout=35.0, follow_redirects=True) as c:
-        r = await c.get(url)
-        r.raise_for_status()
-        html = r.text
+    from tender_agents.research.fetchers import detect_captcha, fetch_url
+
+    fr = await fetch_url(url)
+    if fr.captcha:
+        raise RuntimeError("captcha")
+    if fr.error and not fr.html:
+        raise RuntimeError(fr.error)
+    html = fr.html
     soup = BeautifulSoup(html, "lxml")
     title = ""
     if soup.title and soup.title.string:
@@ -480,25 +490,43 @@ async def run_contact_research(
     profile_id: int,
     *,
     max_pages: int = MAX_PAGE_FETCH,
+    job_id: int | None = None,
 ) -> ResearchReport:
     cr = repo.contacts_repo()
     p = await cr.get_by_id(profile_id, with_appearances=False)
     if not p or not p.id:
         raise ValueError("Контакт не найден")
 
+    jobs = repo.research_jobs()
+    if job_id:
+        await jobs.update_job(job_id, status="running")
+
     queries = build_research_queries(p.full_name, p.organization, p.position)
     report = ResearchReport(query=queries[0])
     serp: list[SerpHit] = []
     seen_urls: set[str] = set()
     source_used = ""
+    prov = repo.provenance()
 
     for q in queries:
-        batch, src = await collect_serp_hits(
+        batch, src, captcha = await collect_serp_hits(
             q,
             yandex_search_url=p.yandex_search_url if not serp else None,
             organization=p.organization,
             full_name=p.full_name,
         )
+        if captcha and not batch and not serp:
+            report.needs_captcha = True
+            report.captcha_engine, report.captcha_url = captcha
+            if job_id:
+                await jobs.update_job(
+                    job_id,
+                    status="needs_captcha",
+                    search_engine=captcha[0],
+                    challenge_url=captcha[1],
+                    instructions="Откройте ссылку в браузере, пройдите капчу, затем загрузите HTML или вставьте cookies.",
+                )
+            return report
         if src and not source_used:
             source_used = src
         for h in batch:
@@ -541,6 +569,24 @@ async def run_contact_research(
     report.findings_skipped = result["skipped"]
     report.channels_updated = result.get("channels") or []
 
+    p2 = await cr.get_by_id(profile_id, with_appearances=False)
+    if p2 and p2.id:
+        if p2.email:
+            await prov.record_provenance(p2.id, report.captcha_url or queries[0], "email", p2.email)
+        if p2.phone:
+            await prov.record_provenance(p2.id, report.captcha_url or queries[0], "phone", p2.phone)
+
+    if job_id:
+        await jobs.update_job(
+            job_id,
+            status="completed",
+            result={
+                "serp_count": report.serp_count,
+                "findings_added": report.findings_added,
+                "channels": report.channels_updated,
+            },
+        )
+
     note = (
         f"[research] «{queries[0][:70]}»; источник: {source_used or '—'}; "
         f"ссылок: {report.serp_count}; страниц: {report.pages_fetched}; "
@@ -568,10 +614,23 @@ def report_summary(r: ResearchReport) -> str:
         parts.append(f"пропущено (дубли): {r.findings_skipped}")
     if r.channels_updated:
         parts.append("обновлены поля: " + ", ".join(r.channels_updated))
-    if r.serp_count == 0:
+    if r.needs_captcha:
+        parts.append(f"нужна капча ({r.captcha_engine}): откройте страницу и нажмите «Продолжить»")
+    elif r.serp_count == 0:
         parts.append(
             "подсказка: Яндекс часто отдаёт капчу боту — проверьте ссылку «Яндекс» вручную или повторите позже"
         )
     if r.errors:
         parts.append(f"ошибки загрузки: {len(r.errors)}")
     return ". ".join(parts) + "."
+
+
+async def execute_research_job(repo, job_id: int) -> ResearchReport:
+    job = await repo.research_jobs().get_job(job_id)
+    if not job:
+        raise ValueError("job not found")
+    try:
+        return await run_contact_research(repo, job.profile_id, job_id=job_id)
+    except Exception as e:
+        await repo.research_jobs().update_job(job_id, status="failed", error=str(e)[:500])
+        raise
