@@ -8,6 +8,7 @@
 | Модель / среда | Cursor Agent |
 | Язык выхода | русский |
 | Продукт | FeedBackTalk — платформа CX / опросов / HR-пульс (tender-lead-agents) |
+| Статус | **Устаревший North Star** (CRM-дашборд) — см. `prompts/vision-ai-collection-platform.md` |
 
 ## Objective
 
