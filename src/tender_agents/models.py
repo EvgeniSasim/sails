@@ -23,3 +23,9 @@ class ListingItem(BaseModel):
     url: HttpUrl
     title: Optional[str] = None
     preview: Optional[str] = None
+
+
+class SearchContext(BaseModel):
+    """Контекст текущего поиска для пагинации."""
+    keyword: str
+    filters: CollectFilters
