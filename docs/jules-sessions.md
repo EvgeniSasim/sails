@@ -19,4 +19,6 @@ Roadmap: [prompts/jules-task01-roadmap.md](../prompts/jules-task01-roadmap.md)
 
 **Цепочка 01–09 закрыта** (2026-06-11).
 
+**Цепочка 02 (10–17):** [jules-sessions-task02.md](jules-sessions-task02.md) · roadmap [prompts/jules-task02-roadmap.md](../prompts/jules-task02-roadmap.md)
+
 Просмотр: https://jules.google.com

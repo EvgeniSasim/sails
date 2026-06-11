@@ -28,5 +28,7 @@
 - `tender-leads probe-search` для smoke-теста конкретного адаптера.
 
 ## Jules
-Каждая сессия фиксируется. См. `docs/jules-sessions.md`.
-PR-ветки именуются `jules/task...`.
+- Цепочка 01 (закрыта): `prompts/jules-task-01-*.md`, трекер `docs/jules-sessions.md`
+- Цепочка 02: `prompts/jules-task-10-*.md` … `17`, roadmap `prompts/jules-task02-roadmap.md`, трекер `docs/jules-sessions-task02.md`
+- Запуск: `JULES_TASK=jules-task-10-extraction-hardening.md python3 scripts/jules_create_sessions.py`
+- PR-ветки: `jules/task01-…`, `jules/task02-…`

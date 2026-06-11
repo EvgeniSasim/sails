@@ -8,6 +8,20 @@ async def accept_cookies(page: Page) -> bool:
     Пытается найти и нажать кнопки согласия с cookie (RU/EN).
     Возвращает True, если кнопка была найдена и нажата.
     """
+    try:
+        await page.wait_for_selector("#ajax-background", state="hidden", timeout=5_000)
+    except Exception:
+        pass
+
+    try:
+        confirm = page.locator("#btnCookieConfirm")
+        if await confirm.count() and await confirm.first.is_visible():
+            await confirm.first.click(force=True)
+            logger.info("Cookie приняты через кнопку: '#btnCookieConfirm'")
+            return True
+    except Exception:
+        pass
+
     # Список текстов на кнопках (регистронезависимо)
     cookie_buttons = [
         "Принять", "Принять все", "Принять всё", "Согласен", "Я согласен",
