@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -138,7 +139,7 @@ def extract_prompt(path: Path) -> str:
     return m.group(1).strip()
 
 
-def jules_create(prompt_file: str, branch_hint: str) -> str:
+def jules_create(prompt_file: str, branch_hint: str, *, retries: int = 5) -> str:
     key = os.environ["JULES_API_KEY"]
     prompt = extract_prompt(PROMPTS_DIR / prompt_file)
     name = prompt_file.replace(".md", "")
@@ -151,15 +152,30 @@ def jules_create(prompt_file: str, branch_hint: str) -> str:
         },
         "automationMode": "AUTO_CREATE_PR",
     }
-    req = urllib.request.Request(
-        API,
-        data=json.dumps(body).encode(),
-        headers={"Content-Type": "application/json", "x-goog-api-key": key},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        out = json.loads(resp.read().decode())
-    return str(out.get("name", out.get("id", ""))).replace("sessions/", "")
+    last_err: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            req = urllib.request.Request(
+                API,
+                data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json", "x-goog-api-key": key},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                out = json.loads(resp.read().decode())
+            return str(out.get("name", out.get("id", ""))).replace("sessions/", "")
+        except urllib.error.HTTPError as e:
+            body_text = e.read().decode() if e.fp else ""
+            last_err = e
+            log(f"Jules API attempt {attempt}/{retries} failed: HTTP {e.code} {body_text}")
+            if attempt < retries:
+                time.sleep(60 * attempt)
+        except Exception as e:
+            last_err = e
+            log(f"Jules API attempt {attempt}/{retries} failed: {e}")
+            if attempt < retries:
+                time.sleep(60 * attempt)
+    raise last_err or RuntimeError("jules_create failed")
 
 
 def patch_tracker(num: str, session_id: str, pr_branch: str, status: str) -> None:
@@ -234,7 +250,16 @@ def main() -> int:
 
         # No branch yet — launch session if needed, then wait
         if "в работе" not in status:
-            ensure_session(num, prompt_file, prefix)
+            try:
+                ensure_session(num, prompt_file, prefix)
+            except Exception as e:
+                log(f"Cannot launch task {num} yet: {e}. Retry in {POLL_SEC}s")
+                time.sleep(POLL_SEC)
+                branch = wait_branch(prefix)
+                if branch and not branch_merged_into_main(branch):
+                    if not merge_and_test(num, branch):
+                        return 1
+                continue
 
         branch = wait_branch(prefix)
         if not branch:
