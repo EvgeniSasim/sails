@@ -117,7 +117,7 @@ def merge_branch(branch: str) -> bool:
 
 def pytest_offline() -> bool:
     py = ROOT / ".venv/bin/pytest"
-    cmd = [str(py), "tests/", "-q"] if py.exists() else ["pytest", "tests/", "-q"]
+    cmd = [str(py), "tests/", "-q", "-m", "not network"] if py.exists() else ["pytest", "tests/", "-q", "-m", "not network"]
     cp = run(cmd, check=False)
     if cp.returncode != 0:
         log(f"PYTEST FAIL:\n{cp.stdout}\n{cp.stderr}")
