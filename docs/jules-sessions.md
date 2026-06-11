@@ -12,8 +12,8 @@ Roadmap: [prompts/jules-task01-roadmap.md](../prompts/jules-task01-roadmap.md)
 | 03 | jules-task-03-sberbank-search | `6576030339391965229` | `jules/task01-03-sber-search-*` | влито |
 | 04 | jules-task-04-sberbank-pagination | `16818195595271529134` | `jules/task01-04-pagination-*` | влито |
 | 05 | jules-task-05-sberbank-detail | `15541771933791510805` | `jules/task01-05-detail-*` | влито |
-| 06 | jules-task-06-orchestrator | `3934737895848242379` | `jules/task01-06-orchestrator` | создана |
-| 07 | jules-task-07-jsonl-store | | | |
+| 06 | jules-task-06-orchestrator | `3934737895848242379` | `jules/task01-06-orchestrator-*` | влито |
+| 07 | jules-task-07-jsonl-store | `2479126506350116251` | `jules/task01-07-jsonl` | создана |
 | 08 | jules-task-08-sqlite-list | | | |
 | 09 | jules-task-09-observability | | | |
 
