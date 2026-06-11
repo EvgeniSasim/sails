@@ -105,6 +105,7 @@ def browse(
 def probe_search(
     platform_url: str = typer.Option(..., "--platform-url", help="URL площадки"),
     keyword: str = typer.Option(..., "-k", "--keyword", help="Ключевое слово"),
+    max_pages: int = typer.Option(1, "--max-pages", help="Макс. страниц для сбора"),
     headed: bool = typer.Option(False, "--headed", help="Запустить в видимом режиме"),
 ) -> None:
     """Smoke-тест поиска: открыть площадку, ввести ключ, вернуть ссылки."""
@@ -124,11 +125,15 @@ def probe_search(
             await adapter.open_home(session)
 
             filters = CollectFilters()
-            items = await adapter.search(session, keyword, filters)
+            ctx = await adapter.search(session, keyword, filters)
 
-            console.print(f"найдено ссылок: [bold]{len(items)}[/bold]")
-            for item in items[:3]:
-                console.print(f"  - {item.url}")
+            items = []
+            async for item in adapter.iter_listing_pages(session, ctx, max_pages=max_pages):
+                items.append(item)
+
+            console.print(f"Всего уникальных ссылок найдено: [bold]{len(items)}[/bold]")
+            for item in items[:5]:
+                console.print(f"  - {item.url} ([dim]{item.title}[/dim])")
 
     try:
         asyncio.run(_probe())

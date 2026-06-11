@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import List
+from typing import List, AsyncIterator
 from tender_agents.browser.session import HumanSession
-from tender_agents.models import ListingItem, CollectFilters
+from tender_agents.models import ListingItem, CollectFilters, SearchContext
 
 class PlatformAdapter(ABC):
     """
@@ -21,6 +21,13 @@ class PlatformAdapter(ABC):
     @abstractmethod
     async def search(
         self, session: HumanSession, keyword: str, filters: CollectFilters
-    ) -> List[ListingItem]:
-        """Выполнить поиск по ключевому слову и вернуть список найденных лотов."""
+    ) -> SearchContext:
+        """Выполнить поиск по ключевому слову и вернуть контекст поиска."""
+        pass
+
+    @abstractmethod
+    async def iter_listing_pages(
+        self, session: HumanSession, ctx: SearchContext, max_pages: int
+    ) -> AsyncIterator[ListingItem]:
+        """Итерироваться по страницам выдачи и возвращать лоты."""
         pass
