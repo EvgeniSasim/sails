@@ -7,7 +7,7 @@ from typing import Optional
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from tender_agents.browser.cookies import accept_cookies
-from tender_agents.browser.exceptions import CaptchaRequiredError
+from tender_agents.browser.exceptions import CaptchaRequiredError, SiteUnreachableError
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,7 @@ class HumanSession:
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self.debug_dir = "data/debug"
+        self._screenshot_saved = False
 
     async def __aenter__(self):
         self.playwright = await async_playwright().start()
@@ -36,7 +37,7 @@ class HumanSession:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if exc_type and self.page:
+        if exc_type and self.page and not self._screenshot_saved:
             await self.save_screenshot("error")
 
         if self.browser:
@@ -67,15 +68,25 @@ class HumanSession:
         """Переход по URL с последующим принятием cookie."""
         logger.info(f"Открываю {url}...")
         try:
-            await self.page.goto(url, wait_until=wait_until, timeout=60_000)
+            await self.page.goto(url, wait_until=wait_until, timeout=45_000)
             await self.check_captcha()
             await self.human_delay()
             await accept_cookies(self.page)
         except CaptchaRequiredError:
             raise
         except Exception as e:
-            logger.error(f"Ошибка при переходе на {url}: {e}")
+            err = str(e).lower()
             await self.save_screenshot("goto_error")
+            if "timeout" in err or "err_connection" in err or "net::" in err:
+                logger.error(
+                    "Сайт не отвечает с этой сети (%s). "
+                    "Откройте URL в обычном браузере; при необходимости VPN/прокси в РФ.",
+                    url,
+                )
+                raise SiteUnreachableError(
+                    f"Площадка недоступна: {url} (таймаут или блокировка сети)"
+                ) from e
+            logger.error(f"Ошибка при переходе на {url}: {e}")
             raise
 
     async def human_delay(self, min_seconds: float = 0.8, max_seconds: float = 2.5):
@@ -89,6 +100,14 @@ class HumanSession:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filepath = os.path.join(self.debug_dir, f"{prefix}_{timestamp}.png")
         if self.page:
-            await self.page.screenshot(path=filepath, timeout=15_000)
-            logger.info(f"Скриншот сохранен: {filepath}")
+            try:
+                await self.page.screenshot(
+                    path=filepath,
+                    timeout=5_000,
+                    animations="disabled",
+                )
+                self._screenshot_saved = True
+                logger.info(f"Скриншот сохранен: {filepath}")
+            except Exception as e:
+                logger.warning("Не удалось сохранить скриншот: %s", e)
         return filepath

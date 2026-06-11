@@ -6,7 +6,7 @@ from typing import Optional
 
 import os
 from tender_agents.browser.session import HumanSession
-from tender_agents.browser.exceptions import CaptchaRequiredError
+from tender_agents.browser.exceptions import CaptchaRequiredError, SiteUnreachableError
 from tender_agents.models import CollectPlan, CollectResult, TenderRecord
 from tender_agents.platforms.registry import get_adapter
 from tender_agents.collect.store import JsonlStore
@@ -107,6 +107,9 @@ async def run_collect(
                     await session.save_screenshot("error_search")
                     result.errors_count += 1
 
+    except SiteUnreachableError as e:
+        logger.error("%s", e)
+        result.errors_count += 1
     except CaptchaRequiredError as e:
         logger.error(f"Нужен ручной ввод: {e}")
         result.errors_count += 1
