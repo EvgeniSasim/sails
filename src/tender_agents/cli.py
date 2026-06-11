@@ -119,14 +119,18 @@ def collect(
             table = Table(title="Итоги сбора по ключевым словам")
             table.add_column("Ключ", style="cyan")
             table.add_column("Сохранено", justify="right", style="green")
+            table.add_column("Фильтр", justify="right", style="blue")
             table.add_column("Дубли", justify="right", style="yellow")
             table.add_column("Ошибки", justify="right", style="red")
             table.add_column("Время", justify="right")
 
+            total_skipped_filter = 0
             for kw, stats in result.keyword_stats.items():
+                total_skipped_filter += stats.skipped_filter
                 table.add_row(
                     kw,
                     str(stats.saved),
+                    str(stats.skipped_filter),
                     str(stats.skipped_duplicate),
                     str(stats.errors),
                     f"{stats.duration_seconds:.1f}с"
@@ -136,6 +140,7 @@ def collect(
             table.add_row(
                 "ИТОГО",
                 str(len(result.records)),
+                str(result.filtered_count),
                 str(result.duplicates_count),
                 str(result.errors_count),
                 f"{result.duration_seconds:.1f}с",

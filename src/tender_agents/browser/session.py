@@ -67,27 +67,37 @@ class HumanSession:
     async def goto(self, url: str, *, wait_until: str = "domcontentloaded"):
         """Переход по URL с последующим принятием cookie."""
         logger.info(f"Открываю {url}...")
-        try:
-            await self.page.goto(url, wait_until=wait_until, timeout=45_000)
-            await self.check_captcha()
-            await self.human_delay()
-            await accept_cookies(self.page)
-        except CaptchaRequiredError:
-            raise
-        except Exception as e:
-            err = str(e).lower()
-            await self.save_screenshot("goto_error")
-            if "timeout" in err or "err_connection" in err or "net::" in err:
-                logger.error(
-                    "Сайт не отвечает с этой сети (%s). "
-                    "Откройте URL в обычном браузере; при необходимости VPN/прокси в РФ.",
-                    url,
-                )
-                raise SiteUnreachableError(
-                    f"Площадка недоступна: {url} (таймаут или блокировка сети)"
-                ) from e
-            logger.error(f"Ошибка при переходе на {url}: {e}")
-            raise
+        max_retries = 1
+        for attempt in range(max_retries + 1):
+            try:
+                await self.page.goto(url, wait_until=wait_until, timeout=45_000)
+                await self.check_captcha()
+                await self.human_delay()
+                await accept_cookies(self.page)
+                return
+            except CaptchaRequiredError:
+                raise
+            except Exception as e:
+                err = str(e).lower()
+                is_network_err = "timeout" in err or "err_connection" in err or "net::" in err
+
+                if is_network_err and attempt < max_retries:
+                    logger.warning(f"Ошибка сети при переходе на {url}, пробую еще раз через 3с...")
+                    await asyncio.sleep(3)
+                    continue
+
+                await self.save_screenshot("goto_error")
+                if is_network_err:
+                    logger.error(
+                        "Сайт не отвечает с этой сети (%s). "
+                        "Откройте URL в обычном браузере; при необходимости VPN/прокси в РФ.",
+                        url,
+                    )
+                    raise SiteUnreachableError(
+                        f"Площадка недоступна: {url} (таймаут или блокировка сети). Попробуйте VPN/прокси в РФ."
+                    ) from e
+                logger.error(f"Ошибка при переходе на {url}: {e}")
+                raise
 
     async def human_delay(self, min_seconds: float = 0.8, max_seconds: float = 2.5):
         """Случайная задержка для имитации человека."""

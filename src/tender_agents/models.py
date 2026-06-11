@@ -62,6 +62,7 @@ class CollectResult(BaseModel):
     totals_per_keyword: dict[str, int] = Field(default_factory=dict)
     errors_count: int = 0
     duplicates_count: int = 0
+    filtered_count: int = 0
     records: List[TenderRecord] = Field(default_factory=list)
 
     started_at: Optional[datetime] = None

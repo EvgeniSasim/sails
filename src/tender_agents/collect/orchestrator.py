@@ -9,6 +9,7 @@ from typing import Optional
 import os
 from tender_agents.browser.session import HumanSession
 from tender_agents.browser.exceptions import CaptchaRequiredError, SiteUnreachableError
+from tender_agents.browser.page_context import capture_main_text
 from tender_agents.models import CollectPlan, CollectResult, TenderRecord, KeywordStats
 from tender_agents.platforms.registry import get_adapter
 from tender_agents.collect.store import JsonlStore
@@ -83,6 +84,15 @@ async def run_collect(
                         try:
                             record = await adapter.open_detail(session, item, keyword, plan.filters)
                             if record:
+                                if record.title == "Без названия" and not record.external_id:
+                                    main_text = await capture_main_text(session.page)
+                                    os.makedirs("data/debug", exist_ok=True)
+                                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                    filepath = f"data/debug/parse-fail-{ts}.txt"
+                                    with open(filepath, "w", encoding="utf-8") as f:
+                                        f.write(main_text)
+                                    logger.warning(f"Предупреждение: не удалось извлечь заголовок и ID. Снимок текста: {filepath}")
+
                                 saved_any = False
                                 for store in stores:
                                     if isinstance(store, DbStore):
@@ -103,6 +113,7 @@ async def run_collect(
                                     logger.debug(f"Дубликат пропущен: {record.url}")
                             else:
                                 stats.skipped_filter += 1
+                                result.filtered_count += 1
 
                             if stats.saved >= plan.max_per_keyword:
                                 break
@@ -116,7 +127,11 @@ async def run_collect(
                     logger.warning(f"Сбор прерван пользователем на ключе '{keyword}'")
                     raise
                 except Exception as e:
-                    logger.error(f"Ошибка при поиске по ключу '{keyword}': {e}")
+                    err_msg = str(e).lower()
+                    hint = ""
+                    if "timeout" in err_msg or "err_connection" in err_msg or "net::" in err_msg:
+                        hint = " Для доступа к площадке может потребоваться VPN/прокси в РФ."
+                    logger.error(f"Ошибка при поиске по ключу '{keyword}': {e}{hint}")
                     await session.save_screenshot("error_search")
                     stats.errors += 1
                     result.errors_count += 1
@@ -167,6 +182,7 @@ def save_report(plan: CollectPlan, result: CollectResult, output_path: Optional[
                 "platform_host": result.platform_host,
                 "total_saved": len(result.records),
                 "total_duplicates": result.duplicates_count,
+                "total_filtered": result.filtered_count,
                 "total_errors": result.errors_count,
                 "per_keyword": {kw: stats.model_dump() for kw, stats in result.keyword_stats.items()}
             },

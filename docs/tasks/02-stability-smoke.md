@@ -13,8 +13,11 @@
 ## Smoke (с вашей машины)
 
 ```bash
-pip install -e ".[browser]"
+pip install -e ".[browser,dev]"
 playwright install chromium
+
+# 0. Тесты (offline)
+pytest -m "not network"
 
 # 1. Браузер
 tender-leads browse --url https://www.sberbank-ast.ru/ --headed
@@ -29,6 +32,9 @@ tender-leads collect \
   --platform-url https://www.sberbank-ast.ru/ \
   -k "crm" --max-per-keyword 3 --max-pages 1 --headed -v
 
+# 4. Снимок страницы для отладки
+tender-leads snapshot --url https://www.sberbank-ast.ru/purchaseview.aspx?id=123
+
 tender-leads list --last 10
 ```
 
@@ -38,5 +44,5 @@ tender-leads list --last 10
 
 Сайт **не открывается с вашей сети** (не баг парсера). Проверьте в обычном Chrome: https://www.sberbank-ast.ru/
 
-- Нужен **VPN/прокси в РФ** или запуск с **сервера в России** (у вас в проде был `111.88.147.92`).
+- Для полноценного сбора требуется российский IP (VPN или сервер в РФ, например `111.88.147.92`).
 - С Mac без доступа к площадке сбор не пойдёт — только smoke `browse`/`collect` на сервере.
