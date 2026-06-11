@@ -47,9 +47,30 @@ class TenderRecord(BaseModel):
     collected_at: datetime = Field(default_factory=datetime.now)
 
 
+class KeywordStats(BaseModel):
+    """Статистика по ключевому слову."""
+    found_links: int = 0
+    saved: int = 0
+    skipped_duplicate: int = 0
+    skipped_filter: int = 0
+    errors: int = 0
+    duration_seconds: float = 0.0
+
+
 class CollectResult(BaseModel):
     """Результаты сбора тендеров."""
     totals_per_keyword: dict[str, int] = Field(default_factory=dict)
     errors_count: int = 0
     duplicates_count: int = 0
     records: List[TenderRecord] = Field(default_factory=list)
+
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    platform_host: Optional[str] = None
+    keyword_stats: dict[str, KeywordStats] = Field(default_factory=dict)
+
+    @property
+    def duration_seconds(self) -> float:
+        if self.started_at and self.finished_at:
+            return (self.finished_at - self.started_at).total_seconds()
+        return 0.0

@@ -1,5 +1,7 @@
 import asyncio
+import json
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -7,7 +9,7 @@ from typing import Optional
 import os
 from tender_agents.browser.session import HumanSession
 from tender_agents.browser.exceptions import CaptchaRequiredError, SiteUnreachableError
-from tender_agents.models import CollectPlan, CollectResult, TenderRecord
+from tender_agents.models import CollectPlan, CollectResult, TenderRecord, KeywordStats
 from tender_agents.platforms.registry import get_adapter
 from tender_agents.collect.store import JsonlStore
 from tender_agents.collect.db import DbStore, init_db
@@ -27,6 +29,10 @@ async def run_collect(
     """
     if result is None:
         result = CollectResult()
+
+    result.started_at = datetime.now()
+    result.platform_host = plan.platform_url.host
+
     adapter = get_adapter(str(plan.platform_url))
 
     stores = []
@@ -62,13 +68,16 @@ async def run_collect(
             for keyword in plan.keywords:
                 logger.info(f"Ищу: {keyword}")
                 result.totals_per_keyword[keyword] = 0
+                stats = KeywordStats()
+                result.keyword_stats[keyword] = stats
+                start_ts = time.time()
 
                 try:
                     ctx = await adapter.search(session, keyword, plan.filters)
 
-                    count = 0
                     async for item in adapter.iter_listing_pages(session, ctx, max_pages=plan.max_pages):
-                        if count >= plan.max_per_keyword:
+                        stats.found_links += 1
+                        if stats.saved >= plan.max_per_keyword:
                             break
 
                         try:
@@ -85,18 +94,22 @@ async def run_collect(
 
                                 if saved_any:
                                     result.records.append(record)
-                                    count += 1
-                                    result.totals_per_keyword[keyword] = count
-                                    logger.info(f"Сохранено лотов: {count}")
+                                    stats.saved += 1
+                                    result.totals_per_keyword[keyword] = stats.saved
+                                    logger.info(f"Сохранено лотов: {stats.saved}")
                                 else:
+                                    stats.skipped_duplicate += 1
                                     result.duplicates_count += 1
                                     logger.debug(f"Дубликат пропущен: {record.url}")
+                            else:
+                                stats.skipped_filter += 1
 
-                            if count >= plan.max_per_keyword:
+                            if stats.saved >= plan.max_per_keyword:
                                 break
                         except Exception as e:
                             logger.error(f"Ошибка при обработке лота {item.url}: {e}")
                             await session.save_screenshot("error_detail")
+                            stats.errors += 1
                             result.errors_count += 1
 
                 except asyncio.CancelledError:
@@ -105,7 +118,10 @@ async def run_collect(
                 except Exception as e:
                     logger.error(f"Ошибка при поиске по ключу '{keyword}': {e}")
                     await session.save_screenshot("error_search")
+                    stats.errors += 1
                     result.errors_count += 1
+                finally:
+                    stats.duration_seconds = time.time() - start_ts
 
     except SiteUnreachableError as e:
         logger.error("%s", e)
@@ -119,4 +135,47 @@ async def run_collect(
         logger.error(f"Критическая ошибка оркестратора: {e}")
         result.errors_count += 1
 
+    finally:
+        result.finished_at = datetime.now()
+        save_report(plan, result, output_path)
+
     return result
+
+
+def save_report(plan: CollectPlan, result: CollectResult, output_path: Optional[str] = None):
+    """
+    Сохраняет отчет о сборе в JSON файл.
+    """
+    try:
+        if output_path is None:
+            today = datetime.now().strftime("%Y-%m-%d")
+            host = plan.platform_url.host or "unknown"
+            output_path = f"data/collect/{today}-{host}.jsonl"
+
+        report_path = Path(output_path).with_suffix(".json")
+        if report_path.suffix == ".json" and report_path.name.endswith("-report.json") is False:
+            report_path = report_path.with_name(report_path.stem + "-report.json")
+
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+
+        data = {
+            "plan": plan.model_dump(mode="json"),
+            "stats": {
+                "started_at": result.started_at.isoformat() if result.started_at else None,
+                "finished_at": result.finished_at.isoformat() if result.finished_at else None,
+                "duration_seconds": result.duration_seconds,
+                "platform_host": result.platform_host,
+                "total_saved": len(result.records),
+                "total_duplicates": result.duplicates_count,
+                "total_errors": result.errors_count,
+                "per_keyword": {kw: stats.model_dump() for kw, stats in result.keyword_stats.items()}
+            },
+            "saved_external_ids": [r.external_id for r in result.records if r.external_id]
+        }
+
+        with open(report_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"Отчёт: {report_path}")
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении отчета: {e}")

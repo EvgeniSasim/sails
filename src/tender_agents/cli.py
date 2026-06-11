@@ -115,33 +115,33 @@ def collect(
         # Не делаем raise, чтобы показать частичные результаты, если они есть
 
     try:
-        if result.records:
-            table = Table(title="Результаты сбора")
-            table.add_column("Ключ", style="dim")
-            table.add_column("ID", style="cyan")
-            table.add_column("Заголовок", style="green")
-            table.add_column("Цена", justify="right")
-            table.add_column("Дата", justify="right")
+        if result.keyword_stats:
+            table = Table(title="Итоги сбора по ключевым словам")
+            table.add_column("Ключ", style="cyan")
+            table.add_column("Сохранено", justify="right", style="green")
+            table.add_column("Дубли", justify="right", style="yellow")
+            table.add_column("Ошибки", justify="right", style="red")
+            table.add_column("Время", justify="right")
 
-            for r in result.records:
+            for kw, stats in result.keyword_stats.items():
                 table.add_row(
-                    r.matched_keyword or "—",
-                    r.external_id or "—",
-                    r.title[:50] + "..." if len(r.title) > 50 else r.title,
-                    r.price or "—",
-                    str(r.publish_date) if r.publish_date else "—"
+                    kw,
+                    str(stats.saved),
+                    str(stats.skipped_duplicate),
+                    str(stats.errors),
+                    f"{stats.duration_seconds:.1f}с"
                 )
+
+            table.add_section()
+            table.add_row(
+                "ИТОГО",
+                str(len(result.records)),
+                str(result.duplicates_count),
+                str(result.errors_count),
+                f"{result.duration_seconds:.1f}с",
+                style="bold"
+            )
             console.print(table)
-
-        console.print("\n[bold]Итоги по ключам:[/bold]")
-        for kw, count in result.totals_per_keyword.items():
-            console.print(f"  - {kw}: {count}")
-
-        if result.duplicates_count > 0:
-            console.print(f"[yellow]Пропущено дублей: {result.duplicates_count}[/yellow]")
-
-        if result.errors_count > 0:
-            console.print(f"[red]Ошибок во время сбора: {result.errors_count}[/red]")
 
     except Exception as e:
         console.print(f"[red]Ошибка при сборе:[/red] {e}")
