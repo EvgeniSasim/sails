@@ -25,6 +25,10 @@ class PlatformAdapter(ABC):
         """Выполнить поиск по ключевому слову и вернуть контекст поиска."""
         pass
 
+    async def apply_period_filter(self, session: HumanSession, filters: CollectFilters) -> None:
+        """Применить фильтр по периоду в UI, если это возможно."""
+        pass
+
     @abstractmethod
     async def iter_listing_pages(
         self, session: HumanSession, ctx: SearchContext, max_pages: int
