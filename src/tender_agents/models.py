@@ -45,3 +45,10 @@ class TenderRecord(BaseModel):
     contacts: Optional[str] = None
     raw_snippet: Optional[str] = None
     collected_at: datetime = Field(default_factory=datetime.now)
+
+
+class CollectResult(BaseModel):
+    """Результаты сбора тендеров."""
+    totals_per_keyword: dict[str, int] = Field(default_factory=dict)
+    errors_count: int = 0
+    records: List[TenderRecord] = Field(default_factory=list)

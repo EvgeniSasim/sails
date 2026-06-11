@@ -41,9 +41,19 @@ def collect(
     date_to: Optional[str] = typer.Option(None, "--date-to", help="Дата окончания (ГГГГ-ММ-ДД)"),
     max_per_keyword: int = typer.Option(10, "--max-per-keyword", help="Макс. лотов на ключ"),
     max_pages: int = typer.Option(5, "--max-pages", help="Макс. страниц на ключ"),
+    headed: bool = typer.Option(False, "--headed", help="Запустить в видимом режиме"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Подробный лог"),
 ) -> None:
     """Сбор тендеров по заданным параметрам."""
+    from tender_agents.collect.orchestrator import run_collect
+    from tender_agents.models import CollectResult
+    from rich.table import Table
+    # Импортируем адаптеры, чтобы они зарегистрировались
+    import tender_agents.platforms.sberbank_ast  # noqa
+
+    if verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
+
     try:
         filters = CollectFilters(
             date_from=datetime.strptime(date_from, "%Y-%m-%d").date() if date_from else None,
@@ -78,6 +88,45 @@ def collect(
 
     if verbose:
         console.print(f"[dim]Полный URL: {plan.platform_url}[/dim]")
+
+    result = CollectResult()
+    try:
+        asyncio.run(run_collect(plan, headed=headed, result=result))
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        console.print("\n[yellow]Сбор прерван пользователем. Вывожу частичные результаты.[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Ошибка при сборе:[/red] {e}")
+        # Не делаем raise, чтобы показать частичные результаты, если они есть
+
+    try:
+        if result.records:
+            table = Table(title="Результаты сбора")
+            table.add_column("Ключ", style="dim")
+            table.add_column("ID", style="cyan")
+            table.add_column("Заголовок", style="green")
+            table.add_column("Цена", justify="right")
+            table.add_column("Дата", justify="right")
+
+            for r in result.records:
+                table.add_row(
+                    r.matched_keyword or "—",
+                    r.external_id or "—",
+                    r.title[:50] + "..." if len(r.title) > 50 else r.title,
+                    r.price or "—",
+                    str(r.publish_date) if r.publish_date else "—"
+                )
+            console.print(table)
+
+        console.print("\n[bold]Итоги по ключам:[/bold]")
+        for kw, count in result.totals_per_keyword.items():
+            console.print(f"  - {kw}: {count}")
+
+        if result.errors_count > 0:
+            console.print(f"[red]Ошибок во время сбора: {result.errors_count}[/red]")
+
+    except Exception as e:
+        console.print(f"[red]Ошибка при сборе:[/red] {e}")
+        raise typer.Exit(code=1)
 
 
 @app.command()

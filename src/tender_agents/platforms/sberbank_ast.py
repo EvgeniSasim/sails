@@ -76,7 +76,7 @@ class SberbankAstAdapter(PlatformAdapter):
         base_url = "https://www.sberbank-ast.ru"
 
         for page_num in range(1, max_pages + 1):
-            logger.info(f"Парсинг страницы {page_num} для ключа '{ctx.keyword}'...")
+            logger.info(f"Ищу: {ctx.keyword}, страница {page_num}")
 
             selector_item = ".masterclue"
             items = await session.page.query_selector_all(selector_item)
