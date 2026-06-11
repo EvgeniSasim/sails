@@ -50,6 +50,21 @@ tender-leads collect \
 ```bash
 # Показать последние 20 тендеров из базы данных
 tender-leads list --last 20
+
+# Просмотр деталей одного тендера по ID или URL
+tender-leads show --id 12345
+tender-leads show --url https://www.sberbank-ast.ru/purchaseview.aspx?id=100
+```
+
+## Экспорт для Excel
+Команда `export` позволяет выгрузить тендеры в формате CSV, который открывается в Excel без проблем с кодировкой (UTF-8 с BOM).
+
+```bash
+# Экспорт последних 100 тендеров (путь по умолчанию: data/export/tenders-{date}.csv)
+tender-leads export --last 100
+
+# Экспорт с фильтром по площадке и в конкретный файл
+tender-leads export --platform sberbank-ast --output my_export.csv
 ```
 
 ## Данные и отладка

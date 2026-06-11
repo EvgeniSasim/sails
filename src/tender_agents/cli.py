@@ -32,6 +32,115 @@ def main() -> None:
 
 
 @app.command()
+def export(
+    last: int = typer.Option(100, "--last", help="Количество последних тендеров для экспорта"),
+    format: str = typer.Option("csv", "--format", help="Формат экспорта (csv)"),
+    output: Optional[str] = typer.Option(None, "--output", help="Путь к файлу"),
+    platform: Optional[str] = typer.Option(None, "--platform", help="Фильтр по площадке"),
+) -> None:
+    """Экспорт тендеров в CSV для Excel."""
+    import os
+    import csv
+    from datetime import datetime
+    from tender_agents.collect.db import DbStore
+
+    if format != "csv":
+        console.print(f"[red]Формат {format} пока не поддерживается. Используйте csv.[/red]")
+        raise typer.Exit(code=1)
+
+    db_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./data/leads.db")
+    store = DbStore(db_url)
+
+    async def _export():
+        records = await store.list_last(limit=last, platform=platform)
+        if not records:
+            console.print("[yellow]Нет тендеров для экспорта.[/yellow]")
+            return
+
+        export_dir = "data/export"
+        os.makedirs(export_dir, exist_ok=True)
+
+        if not output:
+            date_str = datetime.now().strftime("%Y-%m-%d")
+            out_path = os.path.join(export_dir, f"tenders-{date_str}.csv")
+        else:
+            out_path = output
+
+        columns = [
+            "external_id", "title", "customer_name", "price",
+            "publish_date", "deadline", "url", "matched_keyword", "collected_at"
+        ]
+
+        try:
+            with open(out_path, "w", encoding="utf-8-sig", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=columns)
+                writer.writeheader()
+                for r in records:
+                    row = {col: getattr(r, col) for col in columns}
+                    writer.writerow(row)
+
+            console.print(f"[bold green]Экспорт завершен:[/bold green] {out_path} ({len(records)} строк)")
+        except Exception as e:
+            console.print(f"[red]Ошибка при записи файла:[/red] {e}")
+            raise typer.Exit(code=1)
+
+    try:
+        asyncio.run(_export())
+    except Exception as e:
+        console.print(f"[red]Ошибка экспорта:[/red] {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def show(
+    external_id: Optional[str] = typer.Option(None, "--id", help="External ID тендера"),
+    url: Optional[str] = typer.Option(None, "--url", help="URL тендера"),
+) -> None:
+    """Просмотр детальной информации о тендере."""
+    import os
+    from tender_agents.collect.db import DbStore
+    from rich.panel import Panel
+    from rich.table import Table
+
+    if not external_id and not url:
+        console.print("[red]Нужно указать --id или --url[/red]")
+        raise typer.Exit(code=1)
+
+    db_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./data/leads.db")
+    store = DbStore(db_url)
+
+    async def _show():
+        record = await store.get_tender(external_id=external_id, url=url)
+        if not record:
+            console.print("[yellow]Тендер не найден.[/yellow]")
+            return
+
+        table = Table.grid(padding=(0, 1))
+        table.add_column(style="bold cyan", justify="right")
+        table.add_column()
+
+        table.add_row("ID:", record.external_id or "—")
+        table.add_row("Площадка:", record.platform)
+        table.add_row("Заголовок:", record.title)
+        table.add_row("URL:", record.url)
+        table.add_row("Заказчик:", record.customer_name or "—")
+        table.add_row("Цена:", record.price or "—")
+        table.add_row("Опубликовано:", str(record.publish_date) if record.publish_date else "—")
+        table.add_row("Дедлайн:", str(record.deadline) if record.deadline else "—")
+        table.add_row("Ключевое слово:", record.matched_keyword or "—")
+        table.add_row("Контакты:", record.contacts or "—")
+        table.add_row("Собрано:", record.collected_at.strftime("%Y-%m-%d %H:%M:%S"))
+
+        console.print(Panel(table, title="Детали тендера", expand=False))
+
+    try:
+        asyncio.run(_show())
+    except Exception as e:
+        console.print(f"[red]Ошибка при чтении из БД:[/red] {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def status() -> None:
     """Проверка, что CLI установлен."""
     from tender_agents import __version__

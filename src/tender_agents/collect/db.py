@@ -88,11 +88,29 @@ class DbStore:
                 session.add(new_tender)
                 return True
 
-    async def list_last(self, limit: int = 20) -> List[Tender]:
+    async def list_last(self, limit: int = 20, platform: Optional[str] = None) -> List[Tender]:
         if SessionLocal is None:
             await init_db(self.db_url)
 
         async with SessionLocal() as session:
             stmt = select(Tender).order_by(Tender.collected_at.desc()).limit(limit)
+            if platform:
+                stmt = stmt.where(Tender.platform == platform)
             result = await session.execute(stmt)
             return list(result.scalars().all())
+
+    async def get_tender(self, external_id: Optional[str] = None, url: Optional[str] = None) -> Optional[Tender]:
+        if SessionLocal is None:
+            await init_db(self.db_url)
+
+        async with SessionLocal() as session:
+            stmt = select(Tender)
+            if external_id:
+                stmt = stmt.where(Tender.external_id == external_id)
+            elif url:
+                stmt = stmt.where(Tender.url == url.rstrip("/"))
+            else:
+                return None
+
+            result = await session.execute(stmt)
+            return result.scalars().first()
