@@ -36,7 +36,9 @@ def status() -> None:
     """Проверка, что CLI установлен."""
     from tender_agents import __version__
 
-    console.print(f"tender-leads [cyan]{__version__}[/cyan] — каркас, код с нуля")
+    console.print(
+        f"tender-leads [cyan]{__version__}[/cyan] — сбор тендеров (CLI + Playwright)"
+    )
 
 
 @app.command()
@@ -56,8 +58,11 @@ def collect(
     from tender_agents.collect.orchestrator import run_collect
     from tender_agents.models import CollectResult
     from rich.table import Table
-    # Импортируем адаптеры, чтобы они зарегистрировались
-    import tender_agents.platforms.sberbank_ast  # noqa
+    import tender_agents.platforms  # noqa: F401 — регистрация адаптеров
+
+    if store not in ("sqlite", "jsonl", "both"):
+        console.print(f"[red]Неизвестный --store:[/red] {store}")
+        raise typer.Exit(code=1)
 
     if verbose:
         logger = logging.getLogger()
@@ -221,8 +226,7 @@ def probe_search(
     from tender_agents.platforms.registry import get_adapter
     from rich.table import Table
 
-    # Импортируем адаптеры, чтобы они зарегистрировались
-    import tender_agents.platforms.sberbank_ast  # noqa
+    import tender_agents.platforms  # noqa: F401
 
     async def _probe():
         adapter = get_adapter(platform_url)
@@ -252,7 +256,10 @@ def probe_search(
 
             records = []
             for i, item in enumerate(items[:max_per_keyword], 1):
-                console.print(f"Карточка {i}/{min(len(items), max_per_keyword)}: {item.title[:60]}...")
+                title_preview = (item.title or "—")[:60]
+                console.print(
+                    f"Карточка {i}/{min(len(items), max_per_keyword)}: {title_preview}..."
+                )
                 record = await adapter.open_detail(session, item, keyword, filters)
                 if record:
                     records.append(record)

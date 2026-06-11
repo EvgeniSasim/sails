@@ -50,12 +50,12 @@ class HumanSession:
         # Общие признаки капчи/блокировки
         captcha_indicators = [
             "g-recaptcha",
-            "captcha",
-            "robot",
+            "recaptcha",
             "подтвердите, что вы не робот",
-            "блокировка",
-            "IP blocked",
-            "Access Denied",
+            "вы временно заблокированы",
+            "request rejected",
+            "ip blocked",
+            "access denied",
         ]
         for indicator in captcha_indicators:
             if indicator.lower() in content.lower():
@@ -63,11 +63,11 @@ class HumanSession:
                 await self.save_screenshot("captcha")
                 raise CaptchaRequiredError("Нужен ручной ввод (капча или блокировка)")
 
-    async def goto(self, url: str):
+    async def goto(self, url: str, *, wait_until: str = "domcontentloaded"):
         """Переход по URL с последующим принятием cookie."""
         logger.info(f"Открываю {url}...")
         try:
-            await self.page.goto(url, wait_until="networkidle")
+            await self.page.goto(url, wait_until=wait_until, timeout=60_000)
             await self.check_captcha()
             await self.human_delay()
             await accept_cookies(self.page)
@@ -89,6 +89,6 @@ class HumanSession:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filepath = os.path.join(self.debug_dir, f"{prefix}_{timestamp}.png")
         if self.page:
-            await self.page.screenshot(path=filepath)
+            await self.page.screenshot(path=filepath, timeout=15_000)
             logger.info(f"Скриншот сохранен: {filepath}")
         return filepath

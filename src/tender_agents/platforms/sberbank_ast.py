@@ -142,7 +142,7 @@ class SberbankAstAdapter(PlatformAdapter):
                     await next_btn.click()
                     await session.human_delay()
                     # Ждем обновления контента (можно ждать исчезновения старых элементов или появления новых)
-                    await session.page.wait_for_load_state("networkidle")
+                    await session.page.wait_for_load_state("domcontentloaded")
                 else:
                     logger.info("Кнопка следующей страницы не найдена. Конец выдачи.")
                     break
@@ -156,7 +156,7 @@ class SberbankAstAdapter(PlatformAdapter):
     ) -> Optional[TenderRecord]:
         """Парсинг детальной страницы лота Сбербанк-АСТ."""
         logger.info(f"Открываю карточку: {item.url}")
-        await session.page.goto(item.url, wait_until="networkidle")
+        await session.goto(str(item.url))
         await session.human_delay()
         await session.page.mouse.wheel(0, 500)
         await session.human_delay(0.5, 1.0)

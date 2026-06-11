@@ -10,6 +10,7 @@ async def test_open_detail_parsing():
     session = MagicMock()
     session.page = AsyncMock()
     session.human_delay = AsyncMock()
+    session.goto = AsyncMock()
 
     # Mock element finding
     # labels and their corresponding values
@@ -53,6 +54,7 @@ async def test_open_detail_filtering():
     session = MagicMock()
     session.page = AsyncMock()
     session.human_delay = AsyncMock()
+    session.goto = AsyncMock()
 
     data = {
         "Дата размещения извещения": "10.05.2024 10:00:00",
