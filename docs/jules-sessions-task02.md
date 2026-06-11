@@ -7,7 +7,7 @@ Roadmap: [prompts/jules-task02-roadmap.md](../prompts/jules-task02-roadmap.md)
 
 | # | Файл | Session ID | PR | Статус |
 |---|------|------------|-----|--------|
-| 10 | jules-task-10-extraction-hardening | | | ожидает |
+| 10 | jules-task-10-extraction-hardening | `12311005668491240727` | `jules/task02-10-extraction` | в работе |
 | 11 | jules-task-11-offline-fixtures | | | ожидает |
 | 12 | jules-task-12-period-filter-ui | | | ожидает |
 | 13 | jules-task-13-collect-report | | | ожидает |
