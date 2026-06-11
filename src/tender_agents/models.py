@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from typing import List, Optional
 from pydantic import BaseModel, HttpUrl, Field
 
@@ -29,3 +29,19 @@ class SearchContext(BaseModel):
     """Контекст текущего поиска для пагинации."""
     keyword: str
     filters: CollectFilters
+
+
+class TenderRecord(BaseModel):
+    """Полная запись о тендере (после парсинга карточки)."""
+    platform: str
+    external_id: Optional[str] = None
+    title: str
+    url: HttpUrl
+    customer_name: Optional[str] = None
+    publish_date: Optional[date] = None
+    deadline: Optional[date] = None
+    price: Optional[str] = None
+    matched_keyword: Optional[str] = None
+    contacts: Optional[str] = None
+    raw_snippet: Optional[str] = None
+    collected_at: datetime = Field(default_factory=datetime.now)

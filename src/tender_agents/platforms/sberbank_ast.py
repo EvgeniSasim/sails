@@ -1,10 +1,16 @@
 import logging
-from typing import List, AsyncIterator, Set
+from typing import List, AsyncIterator, Set, Optional
 from urllib.parse import urlparse, urljoin, urlunparse
 from tender_agents.platforms.base import PlatformAdapter
 from tender_agents.browser.session import HumanSession
 from tender_agents.platforms.registry import registry
-from tender_agents.models import ListingItem, CollectFilters, SearchContext
+from tender_agents.models import (
+    ListingItem,
+    CollectFilters,
+    SearchContext,
+    TenderRecord,
+)
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +135,85 @@ class SberbankAstAdapter(PlatformAdapter):
                 else:
                     logger.info("Кнопка следующей страницы не найдена. Конец выдачи.")
                     break
+
+    async def open_detail(
+        self,
+        session: HumanSession,
+        item: ListingItem,
+        keyword: str,
+        filters: CollectFilters,
+    ) -> Optional[TenderRecord]:
+        """Парсинг детальной страницы лота Сбербанк-АСТ."""
+        logger.info(f"Открываю карточку: {item.url}")
+        await session.page.goto(item.url, wait_until="networkidle")
+        await session.human_delay()
+        await session.page.mouse.wheel(0, 500)
+        await session.human_delay(0.5, 1.0)
+
+        # Извлечение данных из таблицы детальной информации
+        # На Сбербанке это часто таблицы с id типа 'BaseMainContent_MainContent_...'
+        # Попробуем найти основные поля по текстовым меткам
+
+        async def get_value_by_label(label_text: str) -> Optional[str]:
+            # Ищем <td> с текстом метки, затем берем следующий <td>
+            xpath = f"//td[contains(text(), '{label_text}')]/following-sibling::td[1]"
+            try:
+                el = await session.page.query_selector(f"xpath={xpath}")
+                if el:
+                    text = await el.inner_text()
+                    return text.strip()
+            except Exception:
+                pass
+            return None
+
+        external_id = await get_value_by_label("Номер процедуры")
+        if not external_id:
+            # Альтернативный поиск номера
+            external_id = await get_value_by_label("Номер извещения")
+
+        customer_name = await get_value_by_label("Наименование заказчика")
+        price = await get_value_by_label("Начальная цена")
+
+        publish_date_str = await get_value_by_label("Дата размещения извещения")
+        deadline_str = await get_value_by_label("Дата и время окончания срока подачи заявок")
+
+        def parse_date(date_str: Optional[str]):
+            if not date_str:
+                return None
+            # Формат на Сбербанке обычно: 24.05.2024 10:00:00 (МСК)
+            try:
+                clean_date = date_str.split(" ")[0]
+                return datetime.strptime(clean_date, "%d.%m.%Y").date()
+            except Exception:
+                return None
+
+        publish_date = parse_date(publish_date_str)
+        deadline = parse_date(deadline_str)
+
+        # Проверка фильтра дат
+        if publish_date:
+            if filters.date_from and publish_date < filters.date_from:
+                logger.info(f"Лот пропущен (дата {publish_date} < {filters.date_from})")
+                return None
+            if filters.date_to and publish_date > filters.date_to:
+                logger.info(f"Лот пропущен (дата {publish_date} > {filters.date_to})")
+                return None
+
+        contacts = await get_value_by_label("Контактная информация")
+
+        return TenderRecord(
+            platform="sberbank-ast.ru",
+            external_id=external_id,
+            title=item.title or "Без названия",
+            url=item.url,
+            customer_name=customer_name,
+            publish_date=publish_date,
+            deadline=deadline,
+            price=price,
+            matched_keyword=keyword,
+            contacts=contacts,
+            raw_snippet=item.preview,
+        )
 
 # Регистрация адаптера
 registry.register(SberbankAstAdapter())

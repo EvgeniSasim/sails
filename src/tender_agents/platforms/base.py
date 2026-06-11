@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import List, AsyncIterator
+from typing import List, AsyncIterator, Optional
 from tender_agents.browser.session import HumanSession
-from tender_agents.models import ListingItem, CollectFilters, SearchContext
+from tender_agents.models import ListingItem, CollectFilters, SearchContext, TenderRecord
 
 class PlatformAdapter(ABC):
     """
@@ -30,4 +30,11 @@ class PlatformAdapter(ABC):
         self, session: HumanSession, ctx: SearchContext, max_pages: int
     ) -> AsyncIterator[ListingItem]:
         """Итерироваться по страницам выдачи и возвращать лоты."""
+        pass
+
+    @abstractmethod
+    async def open_detail(
+        self, session: HumanSession, item: ListingItem, keyword: str, filters: CollectFilters
+    ) -> Optional[TenderRecord]:
+        """Открыть детальную страницу лота и спарсить данные."""
         pass
