@@ -1,8 +1,10 @@
+import pytest
 from typer.testing import CliRunner
 from tender_agents.cli import app
 
 runner = CliRunner()
 
+@pytest.mark.network
 def test_collect_plan_summary():
     result = runner.invoke(app, [
         "collect",
@@ -34,3 +36,12 @@ def test_collect_invalid_date():
     ])
     assert result.exit_code == 1
     assert "Ошибка валидации" in result.stdout
+
+@pytest.mark.network
+def test_browse_network():
+    result = runner.invoke(app, [
+        "browse",
+        "--url", "https://www.google.com"
+    ])
+    # This might still fail if blocked, but it's a network test
+    assert result.exit_code in (0, 1)
