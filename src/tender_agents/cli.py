@@ -42,6 +42,7 @@ def collect(
     max_per_keyword: int = typer.Option(10, "--max-per-keyword", help="Макс. лотов на ключ"),
     max_pages: int = typer.Option(5, "--max-pages", help="Макс. страниц на ключ"),
     output: Optional[str] = typer.Option(None, "--output", help="Путь к файлу для сохранения"),
+    store: str = typer.Option("both", "--store", help="Тип хранилища: sqlite, jsonl, both"),
     headed: bool = typer.Option(False, "--headed", help="Запустить в видимом режиме"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Подробный лог"),
 ) -> None:
@@ -92,7 +93,7 @@ def collect(
 
     result = CollectResult()
     try:
-        asyncio.run(run_collect(plan, headed=headed, result=result, output_path=output))
+        asyncio.run(run_collect(plan, headed=headed, result=result, output_path=output, store_type=store))
     except (KeyboardInterrupt, asyncio.CancelledError):
         console.print("\n[yellow]Сбор прерван пользователем. Вывожу частичные результаты.[/yellow]")
     except Exception as e:
@@ -130,6 +131,49 @@ def collect(
 
     except Exception as e:
         console.print(f"[red]Ошибка при сборе:[/red] {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command(name="list")
+def list_tenders(
+    last: int = typer.Option(20, "--last", help="Показать последние N тендеров"),
+) -> None:
+    """Просмотр последних собранных тендеров из базы данных."""
+    import os
+    from tender_agents.collect.db import DbStore
+    from rich.table import Table
+
+    db_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./data/leads.db")
+    store = DbStore(db_url)
+
+    async def _list():
+        records = await store.list_last(limit=last)
+
+        if not records:
+            console.print("[yellow]Тендеров пока нет в базе данных.[/yellow]")
+            return
+
+        table = Table(title=f"Последние {len(records)} тендеров")
+        table.add_column("ID", style="cyan")
+        table.add_column("Площадка", style="dim")
+        table.add_column("Заголовок", style="green")
+        table.add_column("Цена", justify="right")
+        table.add_column("Дедлайн", justify="right")
+
+        for r in records:
+            table.add_row(
+                r.external_id or "—",
+                r.platform,
+                r.title[:50] + "..." if len(r.title) > 50 else r.title,
+                r.price or "—",
+                str(r.deadline) if r.deadline else "—"
+            )
+        console.print(table)
+
+    try:
+        asyncio.run(_list())
+    except Exception as e:
+        console.print(f"[red]Ошибка при чтении из БД:[/red] {e}")
         raise typer.Exit(code=1)
 
 

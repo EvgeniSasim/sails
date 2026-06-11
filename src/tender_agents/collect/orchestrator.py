@@ -4,10 +4,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import os
 from tender_agents.browser.session import HumanSession
 from tender_agents.models import CollectPlan, CollectResult, TenderRecord
 from tender_agents.platforms.registry import get_adapter
 from tender_agents.collect.store import JsonlStore
+from tender_agents.collect.db import DbStore, init_db
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +17,9 @@ async def run_collect(
     plan: CollectPlan,
     headed: bool = False,
     result: Optional[CollectResult] = None,
-    output_path: Optional[str] = None
+    output_path: Optional[str] = None,
+    store_type: str = "both",
+    db_url: Optional[str] = None
 ) -> CollectResult:
     """
     Оркестратор сбора тендеров: один браузер на все ключевые слова.
@@ -24,12 +28,25 @@ async def run_collect(
         result = CollectResult()
     adapter = get_adapter(str(plan.platform_url))
 
-    if output_path is None:
-        today = datetime.now().strftime("%Y-%m-%d")
-        host = plan.platform_url.host or "unknown"
-        output_path = f"data/collect/{today}-{host}.jsonl"
+    stores = []
+    if store_type in ("jsonl", "both"):
+        if output_path is None:
+            today = datetime.now().strftime("%Y-%m-%d")
+            host = plan.platform_url.host or "unknown"
+            output_path = f"data/collect/{today}-{host}.jsonl"
+        stores.append(JsonlStore(output_path))
 
-    store = JsonlStore(output_path)
+    if store_type in ("sqlite", "both"):
+        if not db_url:
+            db_url = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./data/leads.db")
+
+        # Ensure data directory exists for sqlite
+        if ":///" in db_url:
+            db_path_str = db_url.split(":///")[1]
+            Path(db_path_str).parent.mkdir(parents=True, exist_ok=True)
+
+        await init_db(db_url)
+        stores.append(DbStore(db_url))
 
     if not adapter:
         logger.error(f"Адаптер для {plan.platform_url} не найден.")
@@ -56,7 +73,16 @@ async def run_collect(
                         try:
                             record = await adapter.open_detail(session, item, keyword, plan.filters)
                             if record:
-                                if store.write(record):
+                                saved_any = False
+                                for store in stores:
+                                    if isinstance(store, DbStore):
+                                        if await store.write(record):
+                                            saved_any = True
+                                    else:
+                                        if store.write(record):
+                                            saved_any = True
+
+                                if saved_any:
                                     result.records.append(record)
                                     count += 1
                                     result.totals_per_keyword[keyword] = count
