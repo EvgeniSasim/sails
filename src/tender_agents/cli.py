@@ -99,3 +99,39 @@ def browse(
     except Exception as e:
         console.print(f"[red]Ошибка браузера:[/red] {e}")
         raise typer.Exit(code=1)
+
+
+@app.command()
+def probe_search(
+    platform_url: str = typer.Option(..., "--platform-url", help="URL площадки"),
+    keyword: str = typer.Option(..., "-k", "--keyword", help="Ключевое слово"),
+    headed: bool = typer.Option(False, "--headed", help="Запустить в видимом режиме"),
+) -> None:
+    """Smoke-тест поиска: открыть площадку, ввести ключ, вернуть ссылки."""
+    from tender_agents.browser.session import HumanSession
+    from tender_agents.platforms.registry import get_adapter
+    # Импортируем адаптеры, чтобы они зарегистрировались
+    import tender_agents.platforms.sberbank_ast  # noqa
+
+    async def _probe():
+        adapter = get_adapter(platform_url)
+        if not adapter:
+            console.print(f"[red]Адаптер для {platform_url} не найден.[/red]")
+            raise typer.Exit(code=1)
+
+        async with HumanSession(headed=headed) as session:
+            console.print(f"Использую адаптер: [cyan]{adapter.__class__.__name__}[/cyan]")
+            await adapter.open_home(session)
+
+            filters = CollectFilters()
+            items = await adapter.search(session, keyword, filters)
+
+            console.print(f"найдено ссылок: [bold]{len(items)}[/bold]")
+            for item in items[:3]:
+                console.print(f"  - {item.url}")
+
+    try:
+        asyncio.run(_probe())
+    except Exception as e:
+        console.print(f"[red]Ошибка при поиске:[/red] {e}")
+        raise typer.Exit(code=1)

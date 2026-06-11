@@ -16,3 +16,10 @@ class CollectPlan(BaseModel):
     filters: CollectFilters
     max_per_keyword: int = 10
     max_pages: int = 5
+
+
+class ListingItem(BaseModel):
+    """Элемент списка выдачи (ссылка, заголовок, превью)."""
+    url: HttpUrl
+    title: Optional[str] = None
+    preview: Optional[str] = None
