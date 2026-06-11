@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Poll Jules task02: wait branch → merge → pytest → launch next."""
+"""Poll Jules task02: resume → merge → pytest → launch next."""
 
 from __future__ import annotations
 
@@ -19,9 +19,10 @@ API = "https://jules.googleapis.com/v1alpha/sessions"
 SOURCE = os.environ.get("JULES_SOURCE", "sources/github/EvgeniSasim/sails")
 MAIN = os.environ.get("JULES_BRANCH", "main")
 POLL_SEC = int(os.environ.get("JULES_POLL_SEC", "90"))
-MAX_WAIT_PER_TASK = int(os.environ.get("JULES_MAX_WAIT_SEC", str(4 * 3600)))
+MAX_WAIT_PER_TASK = int(os.environ.get("JULES_MAX_WAIT_SEC", str(6 * 3600)))
 
 TASKS = [
+    ("10", "jules-task-10-extraction-hardening.md", "jules/task02-10-extraction"),
     ("11", "jules-task-11-offline-fixtures.md", "jules/task02-11-fixtures"),
     ("12", "jules-task-12-period-filter-ui.md", "jules/task02-12-period"),
     ("13", "jules-task-13-collect-report.md", "jules/task02-13-report"),
@@ -32,6 +33,7 @@ TASKS = [
 ]
 
 PROMPT_NAMES = {
+    "10": "jules-task-10-extraction-hardening",
     "11": "jules-task-11-offline-fixtures",
     "12": "jules-task-12-period-filter-ui",
     "13": "jules-task-13-collect-report",
@@ -58,11 +60,11 @@ def run(cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
 
 
 def git_fetch() -> None:
-    run(["git", "fetch", "origin"])
+    run(["git", "fetch", "origin"], check=False)
 
 
 def remote_branches() -> list[str]:
-    out = run(["git", "branch", "-r"]).stdout
+    out = run(["git", "branch", "-r"], check=False).stdout
     return [
         ln.strip().replace("origin/", "")
         for ln in out.splitlines()
@@ -76,7 +78,7 @@ def find_branch(prefix: str) -> str | None:
 
 
 def branch_merged_into_main(branch: str) -> bool:
-    cp = run(["git", "branch", "-r", "--merged", "origin/main"], check=False)
+    cp = run(["git", "branch", "-r", "--merged", f"origin/{MAIN}"], check=False)
     return branch in cp.stdout
 
 
@@ -85,39 +87,41 @@ def wait_branch(prefix: str) -> str | None:
     while time.time() < deadline:
         git_fetch()
         branch = find_branch(prefix)
-        if branch and not branch_merged_into_main(branch):
-            time.sleep(20)
+        if branch:
+            if branch_merged_into_main(branch):
+                log(f"Branch {branch} already merged while waiting")
+                return branch
+            time.sleep(15)
             git_fetch()
             return find_branch(prefix) or branch
-        if branch and branch_merged_into_main(branch):
-            log(f"Branch {branch} already merged")
-            return branch
-        log(f"Waiting {prefix}* …")
+        log(f"Waiting {prefix}* … ({int(deadline - time.time())}s left)")
         time.sleep(POLL_SEC)
     return None
 
 
 def merge_branch(branch: str) -> bool:
+    run(["git", "checkout", "main"], check=False)
+    run(["git", "pull", "origin", "main"], check=False)
     if branch_merged_into_main(branch):
-        log(f"Skip merge, already in main: {branch}")
-        run(["git", "checkout", "main"], check=False)
-        run(["git", "pull", "origin", "main"], check=False)
+        log(f"Already merged: {branch}")
         return True
-    run(["git", "checkout", "main"])
-    run(["git", "pull", "origin", "main"])
     stat = run(["git", "diff", f"origin/{MAIN}...origin/{branch}", "--stat"], check=False)
-    log(stat.stdout)
+    log(stat.stdout.strip())
     cp = run(["git", "merge", f"origin/{branch}", "-m", f"Merge Jules {branch}."], check=False)
     if cp.returncode != 0:
         log(f"MERGE FAIL: {cp.stderr}")
         return False
-    run(["git", "push", "origin", "main"])
+    run(["git", "push", "origin", "main"], check=False)
     return True
 
 
 def pytest_offline() -> bool:
     py = ROOT / ".venv/bin/pytest"
-    cmd = [str(py), "tests/", "-q", "-m", "not network"] if py.exists() else ["pytest", "tests/", "-q", "-m", "not network"]
+    cmd = (
+        [str(py), "tests/", "-q", "-m", "not network"]
+        if py.exists()
+        else ["pytest", "tests/", "-q", "-m", "not network"]
+    )
     cp = run(cmd, check=False)
     if cp.returncode != 0:
         log(f"PYTEST FAIL:\n{cp.stdout}\n{cp.stderr}")
@@ -155,8 +159,7 @@ def jules_create(prompt_file: str, branch_hint: str) -> str:
     )
     with urllib.request.urlopen(req, timeout=120) as resp:
         out = json.loads(resp.read().decode())
-    sid = str(out.get("name", out.get("id", ""))).replace("sessions/", "")
-    return sid
+    return str(out.get("name", out.get("id", ""))).replace("sessions/", "")
 
 
 def patch_tracker(num: str, session_id: str, pr_branch: str, status: str) -> None:
@@ -172,29 +175,31 @@ def patch_tracker(num: str, session_id: str, pr_branch: str, status: str) -> Non
     run(["git", "push", "origin", "main"], check=False)
 
 
-def review_notes(num: str, branch: str) -> str:
-    diff = run(["git", "diff", f"origin/{MAIN}...origin/{branch}", "--stat"], check=False).stdout
-    return diff.strip()
+def tracker_status(num: str) -> str:
+    for line in TRACKER.read_text(encoding="utf-8").splitlines():
+        if line.startswith(f"| {num} |"):
+            return line.split("|")[-2].strip()
+    return ""
 
 
-def process_task(num: str, prompt_file: str, prefix: str, *, launch_if_missing: bool) -> bool:
-    log(f"=== Task {num} ===")
-    branch = wait_branch(prefix)
-    if not branch:
-        log(f"TIMEOUT task {num}")
-        return False
-
-    notes = review_notes(num, branch)
-    log(f"Review {num}:\n{notes}")
-
+def merge_and_test(num: str, branch: str) -> bool:
+    log(f"Review {num}:\n{run(['git', 'diff', f'origin/{MAIN}...origin/{branch}', '--stat'], check=False).stdout.strip()}")
     if not merge_branch(branch):
         return False
     if not pytest_offline():
+        log(f"STOP: task {num} merged but pytest failed — fix manually")
         return False
-
     patch_tracker(num, "done", branch, "влито")
     log(f"Task {num} OK")
     return True
+
+
+def ensure_session(num: str, prompt_file: str, prefix: str) -> None:
+    status = tracker_status(num)
+    if status.startswith("ожидает") or not status:
+        sid = jules_create(prompt_file, prefix)
+        patch_tracker(num, sid, f"{prefix}-{sid}", "в работе")
+        log(f"Launched task {num} session {sid}")
 
 
 def main() -> int:
@@ -202,24 +207,44 @@ def main() -> int:
         log("JULES_API_KEY missing")
         return 1
 
-    start = os.environ.get("JULES_START", "11")
-    log(f"Chain02 monitor from task {start}")
+    start = os.environ.get("JULES_START")
+    log(f"Chain02 monitor start={start or 'auto'}")
 
-    for i, (num, prompt_file, prefix) in enumerate(TASKS):
-        if num < start:
+    for num, prompt_file, prefix in TASKS:
+        if start and num < start:
             continue
 
-        if num == start:
-            # task 11 already has session; just wait
-            if not process_task(num, prompt_file, prefix, launch_if_missing=False):
+        status = tracker_status(num)
+        if "влито" in status:
+            log(f"Skip task {num} (already merged)")
+            continue
+
+        git_fetch()
+        branch = find_branch(prefix)
+
+        if branch and branch_merged_into_main(branch):
+            patch_tracker(num, "done", branch, "влито")
+            log(f"Task {num} was merged externally")
+            continue
+
+        if branch:
+            if not merge_and_test(num, branch):
                 return 1
-        else:
-            sid = jules_create(prompt_file, prefix)
-            actual_branch = f"{prefix}-{sid}"
-            patch_tracker(num, sid, actual_branch, "в работе")
-            log(f"Started task {num} session {sid}")
-            if not process_task(num, prompt_file, prefix, launch_if_missing=False):
-                return 1
+            continue
+
+        # No branch yet — launch session if needed, then wait
+        if "в работе" not in status:
+            ensure_session(num, prompt_file, prefix)
+
+        branch = wait_branch(prefix)
+        if not branch:
+            log(f"TIMEOUT task {num}")
+            return 1
+        if branch_merged_into_main(branch):
+            patch_tracker(num, "done", branch, "влито")
+            continue
+        if not merge_and_test(num, branch):
+            return 1
 
     log("=== Chain 02 complete ===")
     return 0
