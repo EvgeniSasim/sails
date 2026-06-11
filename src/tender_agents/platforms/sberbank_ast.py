@@ -55,6 +55,42 @@ class SberbankAstAdapter(PlatformAdapter):
     async def open_home(self, session: HumanSession):
         await session.goto("https://www.sberbank-ast.ru/")
 
+    async def apply_period_filter(self, session: HumanSession, filters: CollectFilters) -> None:
+        if not filters.date_from and not filters.date_to:
+            return
+
+        page = session.page
+        # Клик по "дополнительные фильтры" для раскрытия полей дат
+        expand_btn = page.get_by_text(re.compile(r"дополнительные фильтры", re.I))
+        if await expand_btn.count() > 0 and await expand_btn.is_visible():
+            logger.debug("Раскрываю дополнительные фильтры")
+            await expand_btn.click()
+            await session.human_delay()
+
+        # Заполнение дат
+        # Поиск полей "Дата публикации с" и "по"
+        # Обычно это input рядом с текстом или с соответствующим placeholder
+        if filters.date_from:
+            date_str = filters.date_from.strftime("%d.%m.%Y")
+            logger.info("Устанавливаю фильтр 'Дата публикации с': %s", date_str)
+            # Пытаемся найти поле по placeholder или по тексту метки рядом
+            from_input = page.get_by_placeholder("ДД.ММ.ГГГГ").first
+            # На Сбербанке часто несколько таких полей, нужно более точное позиционирование если возможно
+            # Но по ТЗ используем семантику. Если первое поле - это "с", второе - "по".
+            if await from_input.count() > 0:
+                await from_input.fill(date_str)
+                await from_input.press("Enter")
+
+        if filters.date_to:
+            date_str = filters.date_to.strftime("%d.%m.%Y")
+            logger.info("Устанавливаю фильтр 'Дата публикации по': %s", date_str)
+            to_input = page.get_by_placeholder("ДД.ММ.ГГГГ").nth(1)
+            if await to_input.count() > 0:
+                await to_input.fill(date_str)
+                await to_input.press("Enter")
+
+        await session.human_delay()
+
     async def search(
         self, session: HumanSession, keyword: str, filters: CollectFilters
     ) -> SearchContext:
@@ -64,6 +100,9 @@ class SberbankAstAdapter(PlatformAdapter):
 
         await self._prepare_page(session)
         await self._check_blocked(session)
+
+        # Применяем фильтр по датам перед вводом ключевого слова, если даты заданы
+        await self.apply_period_filter(session, filters)
 
         try:
             await fill_search_field(session.page, keyword)
