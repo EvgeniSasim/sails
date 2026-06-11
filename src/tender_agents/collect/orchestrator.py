@@ -1,17 +1,21 @@
 import asyncio
 import logging
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from tender_agents.browser.session import HumanSession
 from tender_agents.models import CollectPlan, CollectResult, TenderRecord
 from tender_agents.platforms.registry import get_adapter
+from tender_agents.collect.store import JsonlStore
 
 logger = logging.getLogger(__name__)
 
 async def run_collect(
     plan: CollectPlan,
     headed: bool = False,
-    result: Optional[CollectResult] = None
+    result: Optional[CollectResult] = None,
+    output_path: Optional[str] = None
 ) -> CollectResult:
     """
     Оркестратор сбора тендеров: один браузер на все ключевые слова.
@@ -19,6 +23,13 @@ async def run_collect(
     if result is None:
         result = CollectResult()
     adapter = get_adapter(str(plan.platform_url))
+
+    if output_path is None:
+        today = datetime.now().strftime("%Y-%m-%d")
+        host = plan.platform_url.host or "unknown"
+        output_path = f"data/collect/{today}-{host}.jsonl"
+
+    store = JsonlStore(output_path)
 
     if not adapter:
         logger.error(f"Адаптер для {plan.platform_url} не найден.")
@@ -45,10 +56,14 @@ async def run_collect(
                         try:
                             record = await adapter.open_detail(session, item, keyword, plan.filters)
                             if record:
-                                result.records.append(record)
-                                count += 1
-                                result.totals_per_keyword[keyword] = count
-                                logger.info(f"Сохранено лотов: {count}")
+                                if store.write(record):
+                                    result.records.append(record)
+                                    count += 1
+                                    result.totals_per_keyword[keyword] = count
+                                    logger.info(f"Сохранено лотов: {count}")
+                                else:
+                                    result.duplicates_count += 1
+                                    logger.debug(f"Дубликат пропущен: {record.url}")
 
                             if count >= plan.max_per_keyword:
                                 break

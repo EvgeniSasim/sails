@@ -41,6 +41,7 @@ def collect(
     date_to: Optional[str] = typer.Option(None, "--date-to", help="Дата окончания (ГГГГ-ММ-ДД)"),
     max_per_keyword: int = typer.Option(10, "--max-per-keyword", help="Макс. лотов на ключ"),
     max_pages: int = typer.Option(5, "--max-pages", help="Макс. страниц на ключ"),
+    output: Optional[str] = typer.Option(None, "--output", help="Путь к файлу для сохранения"),
     headed: bool = typer.Option(False, "--headed", help="Запустить в видимом режиме"),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Подробный лог"),
 ) -> None:
@@ -91,7 +92,7 @@ def collect(
 
     result = CollectResult()
     try:
-        asyncio.run(run_collect(plan, headed=headed, result=result))
+        asyncio.run(run_collect(plan, headed=headed, result=result, output_path=output))
     except (KeyboardInterrupt, asyncio.CancelledError):
         console.print("\n[yellow]Сбор прерван пользователем. Вывожу частичные результаты.[/yellow]")
     except Exception as e:
@@ -120,6 +121,9 @@ def collect(
         console.print("\n[bold]Итоги по ключам:[/bold]")
         for kw, count in result.totals_per_keyword.items():
             console.print(f"  - {kw}: {count}")
+
+        if result.duplicates_count > 0:
+            console.print(f"[yellow]Пропущено дублей: {result.duplicates_count}[/yellow]")
 
         if result.errors_count > 0:
             console.print(f"[red]Ошибок во время сбора: {result.errors_count}[/red]")
