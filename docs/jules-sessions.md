@@ -1,20 +1,20 @@
-# Jules sessions (2026-05-20)
+# Jules sessions — задача 1
 
-Источник: `sources/github/EvgeniSasim/sails` (ветка `main`).
+Roadmap: [prompts/jules-task01-roadmap.md](../prompts/jules-task01-roadmap.md)  
+ТЗ: [task-01-spec.md](task-01-spec.md)
 
-| # | Задача | Session ID | Статус |
-|---|--------|------------|--------|
-| 1 | zakupki-resilience | — | **400 FAILED_PRECONDITION** (лимит/конфликт; повторить вручную) |
-| 2 | research-captcha-compliance | `11039565428354772031` | создана |
-| 3 | excel-import | `875956085978133483` | влито в `main` (`excel_ingest`, PR #1 закрыт); fix path traversal — `b295ae6` ≈ наш UUID + resolve |
+## Tracker
 
-Повтор задачи 1:
-
-```bash
-set -a && source /Users/evgenii/business/.env && export JULES_SOURCE=sources/github/EvgeniSasim/sails
-python3 scripts/jules_create_sessions.py  # только zakupki — отредактировать order в скрипте
-```
-
-Локально задача 1 уже закрыта (zakupki + `tests/test_zakupki_urls.py`).
+| # | Файл | Session ID | PR | Статус |
+|---|------|------------|-----|--------|
+| 01 | jules-task-01-collect-cli | | | |
+| 02 | jules-task-02-browser-session | | | |
+| 03 | jules-task-03-sberbank-search | | | |
+| 04 | jules-task-04-sberbank-pagination | | | |
+| 05 | jules-task-05-sberbank-detail | | | |
+| 06 | jules-task-06-orchestrator | | | |
+| 07 | jules-task-07-jsonl-store | | | |
+| 08 | jules-task-08-sqlite-list | | | |
+| 09 | jules-task-09-observability | | | |
 
 Просмотр: https://jules.google.com

@@ -1,3 +1,3 @@
-"""Tender lead collection agents — search, enrich, store."""
+"""Tender collection — переписываем с нуля."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

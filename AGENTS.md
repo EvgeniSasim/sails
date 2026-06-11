@@ -1,43 +1,32 @@
-# AGENTS.md — tender-lead-agents
+# AGENTS.md
 
 ## Product
 
-B2B sales tool for **FeedBackTalk** (CX / surveys / HR pulse). Managers get tender leads and executive contacts (HR, CX, research buyers).
+Сбор тендеров для **FeedBackTalk** (CX / surveys / HR). Задача 1: менеджер задаёт URL площадки + ключи → браузер как человек (Playwright). ТЗ: `docs/task-01-spec.md`.
 
 ## Stack
 
-- Python 3.11+, package `src/tender_agents`
+- Python 3.11+, пакет `src/tender_agents`
 - CLI: `tender-leads` (typer)
-- Web: FastAPI + HTML in `src/tender_agents/web/`
-- DB: SQLite async (SQLAlchemy), `data/leads.db`
-- Config: `config/*.yaml`, secrets in `.env` (never commit)
-
-## Layout
-
-| Path | Role |
-|------|------|
-| `src/tender_agents/agents/` | Search, Enrich, Store, contact_research |
-| `src/tender_agents/scrape/parsers/zakupki.py` | Free EIS parser (httpx) |
-| `src/tender_agents/contacts_db.py` | Contact profiles + appearances |
-| `src/tender_agents/db.py` | Tender leads |
-| `prompts/` | Prompt specs for Jules / Cursor tasks |
-| `docs/` | Product and deploy docs |
+- Секреты: `.env` (never commit)
 
 ## Conventions
 
-- Russian UI strings in `html_pages.py`
-- Minimal diffs; match existing style
-- No secrets in code; use `settings.py` / pydantic-settings
-- Yandex LLM: `chat/completions` only (`YANDEX_USE_RESPONSES_API=false`)
+- Маленькие шаги, минимальный diff
+- Сначала консоль и проверяемый результат, потом UI
+- Русские строки в CLI-выводе для менеджера
+
+## Jules
+
+Одна сессия = один файл `prompts/jules-task-01-*.md`. Roadmap: `prompts/jules-task01-roadmap.md`.
+
+```bash
+JULES_TASK=jules-task-01-collect-cli.md python3 scripts/jules_create_sessions.py
+```
 
 ## Run
 
 ```bash
-pip install -e ".[web]"
-tender-leads serve
-tender-leads run -s zakupki -k "crm" --max-per-keyword 5
+pip install -e .
+tender-leads status
 ```
-
-## Jules task prompts
-
-See `prompts/jules-task-*.md` and `docs/product-roadmap-v2.md`.
