@@ -9,20 +9,33 @@
 **ТЗ:** [docs/task-01-spec.md](docs/task-01-spec.md)  
 **Jules (ручной запуск):** [prompts/jules-task01-roadmap.md](prompts/jules-task01-roadmap.md)
 
-## Сейчас
-
-```bash
-pip install -e .
-tender-leads status
-```
-
-Реализация сбора — по плану из ТЗ (шаг 1: CLI `collect`).
-
-## Установка браузера (когда дойдём до шага 2)
+## Установка
 
 ```bash
 pip install -e ".[browser]"
 playwright install chromium
+```
+
+## Использование
+
+### Проверка статуса
+```bash
+tender-leads status
+```
+
+### Smoke-тест браузера
+```bash
+tender-leads browse --url https://www.sberbank-ast.ru/
+```
+
+### Сбор тендеров (план)
+```bash
+tender-leads collect \
+  --platform-url https://www.sberbank-ast.ru/ \
+  -k "опрос сотрудников" \
+  -k "CRM" \
+  --date-from 2026-05-01 \
+  -v
 ```
 
 Секреты — в `.env` (не коммитить). См. `.env.example`.

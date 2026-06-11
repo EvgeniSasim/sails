@@ -1,3 +1,4 @@
+import asyncio
 from typing import List, Optional
 from datetime import datetime
 import typer
@@ -5,8 +6,18 @@ from rich.console import Console
 from pydantic import ValidationError
 from tender_agents.models import CollectFilters, CollectPlan
 
+import logging
+from rich.logging import RichHandler
+
 app = typer.Typer(help="Сбор тендеров по ключевым словам и фильтрам")
 console = Console()
+
+logging.basicConfig(
+    level="INFO",
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(rich_tracebacks=True, console=console, show_path=False)]
+)
 
 
 @app.callback()
@@ -67,3 +78,24 @@ def collect(
 
     if verbose:
         console.print(f"[dim]Полный URL: {plan.platform_url}[/dim]")
+
+
+@app.command()
+def browse(
+    url: str = typer.Option(..., "--url", help="URL для открытия"),
+    headed: bool = typer.Option(False, "--headed", help="Запустить в видимом режиме"),
+) -> None:
+    """Открыть сайт и принять cookie (smoke-тест браузера)."""
+    from tender_agents.browser.session import HumanSession
+
+    async def _browse():
+        async with HumanSession(headed=headed) as session:
+            await session.goto(url)
+            # Внутри session.goto уже есть логирование и accept_cookies
+            console.print("[bold green]Готово[/bold green]")
+
+    try:
+        asyncio.run(_browse())
+    except Exception as e:
+        console.print(f"[red]Ошибка браузера:[/red] {e}")
+        raise typer.Exit(code=1)
