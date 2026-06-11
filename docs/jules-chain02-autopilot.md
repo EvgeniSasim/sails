@@ -30,9 +30,20 @@ python3 scripts/jules_chain02_monitor.py
 tail -50 data/debug/jules-chain02-monitor.log
 cat docs/jules-sessions-task02.md
 git log origin/main -8 --oneline
-pytest tests/ -q
+pytest tests/ -q -m "not network"
 ```
 
-Если монитор упал (merge conflict / pytest red) — лог покажет на какой задаче остановился.
+**Перезапуск монитора** (после сна Mac или падения):
+
+```bash
+export JULES_API_KEY=...
+export JULES_SOURCE=sources/github/EvgeniSasim/sails
+export JULES_BRANCH=main
+python3 scripts/jules_chain02_monitor.py
+```
+
+Монитор сам пропускает «влито» и продолжает с текущей задачи.
+
+Если Mac ушёл в сон — процесс умирает. Держите питание или `caffeinate -i python3 scripts/jules_chain02_monitor.py`.
 
 Jules UI: https://jules.google.com
