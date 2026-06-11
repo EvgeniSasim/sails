@@ -45,3 +45,35 @@ def test_split_listing_blocks():
     assert extract_procedure_number(blocks[0]) == "111"
     assert "молока" in blocks[0]
     assert extract_procedure_number(blocks[1]) == "222"
+
+
+def test_parse_tender_detail_text_variations():
+    # Test variation in price label and missing fields
+    text = """
+    Сведения о закупке № SBR-TEST-001
+    Наименование объекта закупки:
+    Услуги клининга
+    Начальная (максимальная) цена контракта:
+    500 000,00
+    01.01.2024 12:00:00 Публикация извещения
+    """
+    fields = parse_tender_detail_text(text)
+    assert fields["external_id"] == "SBR-TEST-001"
+    assert fields["title"] == "Услуги клининга"
+    assert fields["price"] == "500 000,00"
+    assert fields["publish_date_str"] == "01.01.2024"
+    assert fields["customer_name"] is None
+
+
+def test_split_listing_blocks_sberbank_style():
+    text = """
+    Результаты поиска
+    № 2024-001 Продажа имущества
+    Цена: 100
+    № 2024-002 Аренда помещения
+    Цена: 200
+    """
+    blocks = split_listing_blocks(text)
+    assert len(blocks) == 2
+    assert extract_procedure_number(blocks[0]) == "2024-001"
+    assert extract_procedure_number(blocks[1]) == "2024-002"

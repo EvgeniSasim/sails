@@ -289,3 +289,61 @@ def probe_search(
     except Exception as e:
         console.print(f"[red]Ошибка при поиске:[/red] {e}")
         raise typer.Exit(code=1)
+
+
+@app.command()
+def snapshot(
+    url: str = typer.Option(..., "--url", help="URL для снимка"),
+    headed: bool = typer.Option(False, "--headed", help="Запустить в видимом режиме"),
+    output: Optional[str] = typer.Option(None, "-o", "--output", help="Путь к файлу (txt)"),
+) -> None:
+    """Сделать снимок страницы (текст + leaf-данные) для отладки."""
+    import json
+    import os
+    from datetime import datetime
+    from tender_agents.browser.session import HumanSession
+    from tender_agents.browser.page_context import capture_snapshot
+
+    async def _snapshot():
+        debug_dir = "data/debug"
+        os.makedirs(debug_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        txt_path = output or os.path.join(debug_dir, f"snapshot-{timestamp}.txt")
+        json_path = os.path.splitext(txt_path)[0] + ".json"
+
+        try:
+            async with HumanSession(headed=headed) as session:
+                await session.goto(url)
+                snap = await capture_snapshot(session.page)
+
+                main_text_limit = 20_000
+                main_text = snap.main_text[:main_text_limit]
+                if len(snap.main_text) > main_text_limit:
+                    main_text += "\n... (truncated)"
+
+                with open(txt_path, "w", encoding="utf-8") as f:
+                    f.write(f"URL: {snap.url}\n")
+                    f.write(f"MARKER: {snap.results_marker or 'Not found'}\n")
+                    f.write("-" * 20 + "\n")
+                    f.write("LISTING ITEMS (JSON):\n")
+                    f.write(json.dumps(snap.listing_items, ensure_ascii=False, indent=2))
+                    f.write("\n" + "-" * 20 + "\n")
+                    f.write("MAIN TEXT:\n")
+                    f.write(main_text)
+
+                with open(json_path, "w", encoding="utf-8") as f:
+                    json.dump(snap.listing_items, f, ensure_ascii=False, indent=2)
+
+                console.print(f"Снимок сохранён: [cyan]{txt_path}[/cyan]")
+                console.print(f"Данные сохранены: [cyan]{json_path}[/cyan]")
+
+        except Exception as e:
+            console.print(f"[red]Ошибка при создании снимка:[/red] {e}")
+            raise typer.Exit(code=1)
+
+    try:
+        asyncio.run(_snapshot())
+    except Exception as e:
+        console.print(f"[red]Критическая ошибка:[/red] {e}")
+        raise typer.Exit(code=1)

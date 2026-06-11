@@ -76,6 +76,12 @@ class SberbankAstAdapter(PlatformAdapter):
 
         try:
             await wait_search_results(session.page)
+            # Логируем маркер результатов для подтверждения успешного поиска
+            text = await capture_main_text(session.page)
+            if "Найдено процедур" in text:
+                match = re.search(r"Найдено процедур[^\n]*", text)
+                if match:
+                    logger.info("Статус поиска: %s", match.group(0))
         except Exception:
             logger.warning("Результаты поиска по ключу '%s' не появились вовремя.", keyword)
 
