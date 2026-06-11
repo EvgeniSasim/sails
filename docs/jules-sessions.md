@@ -15,6 +15,8 @@ Roadmap: [prompts/jules-task01-roadmap.md](../prompts/jules-task01-roadmap.md)
 | 06 | jules-task-06-orchestrator | `3934737895848242379` | `jules/task01-06-orchestrator-*` | влито |
 | 07 | jules-task-07-jsonl-store | `2479126506350116251` | `jules/task01-07-jsonl-*` | влито |
 | 08 | jules-task-08-sqlite-list | `18019413515101102803` | `jules/task01-08-sqlite-*` | влито |
-| 09 | jules-task-09-observability | `17050394441491597649` | `jules/task01-09-observability` | создана |
+| 09 | jules-task-09-observability | `17050394441491597649` | `jules/task01-09-observability-*` | влито |
+
+**Цепочка 01–09 закрыта** (2026-06-11).
 
 Просмотр: https://jules.google.com
