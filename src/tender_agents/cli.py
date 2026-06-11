@@ -16,7 +16,13 @@ logging.basicConfig(
     level="INFO",
     format="%(message)s",
     datefmt="[%X]",
-    handlers=[RichHandler(rich_tracebacks=True, console=console, show_path=False)]
+    handlers=[RichHandler(
+        rich_tracebacks=True,
+        console=console,
+        show_path=False,
+        show_time=True,
+        show_level=True
+    )]
 )
 
 
@@ -54,7 +60,10 @@ def collect(
     import tender_agents.platforms.sberbank_ast  # noqa
 
     if verbose:
-        logging.getLogger().setLevel(logging.DEBUG)
+        logger = logging.getLogger()
+        logger.setLevel(logging.DEBUG)
+        for handler in logger.handlers:
+            handler.setLevel(logging.DEBUG)
 
     try:
         filters = CollectFilters(

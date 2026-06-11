@@ -6,6 +6,7 @@ from typing import Optional
 
 import os
 from tender_agents.browser.session import HumanSession
+from tender_agents.browser.exceptions import CaptchaRequiredError
 from tender_agents.models import CollectPlan, CollectResult, TenderRecord
 from tender_agents.platforms.registry import get_adapter
 from tender_agents.collect.store import JsonlStore
@@ -95,6 +96,7 @@ async def run_collect(
                                 break
                         except Exception as e:
                             logger.error(f"Ошибка при обработке лота {item.url}: {e}")
+                            await session.save_screenshot("error_detail")
                             result.errors_count += 1
 
                 except asyncio.CancelledError:
@@ -102,8 +104,12 @@ async def run_collect(
                     raise
                 except Exception as e:
                     logger.error(f"Ошибка при поиске по ключу '{keyword}': {e}")
+                    await session.save_screenshot("error_search")
                     result.errors_count += 1
 
+    except CaptchaRequiredError as e:
+        logger.error(f"Нужен ручной ввод: {e}")
+        result.errors_count += 1
     except asyncio.CancelledError:
         logger.info("Завершаю работу (прервано)")
     except Exception as e:

@@ -3,6 +3,7 @@ from typing import List, AsyncIterator, Set, Optional
 from urllib.parse import urlparse, urljoin, urlunparse
 from tender_agents.platforms.base import PlatformAdapter
 from tender_agents.browser.session import HumanSession
+from tender_agents.browser.exceptions import CaptchaRequiredError
 from tender_agents.platforms.registry import registry
 from tender_agents.models import (
     ListingItem,
@@ -34,9 +35,19 @@ class SberbankAstAdapter(PlatformAdapter):
         if session.page.url != search_url:
             await session.goto(search_url)
 
+        # Проверка на специфичную для Сбербанка капчу/блокировку
+        content = await session.page.content()
+        if "Вы временно заблокированы" in content or "Request Rejected" in content:
+            raise CaptchaRequiredError("Сбербанк-АСТ: временная блокировка или капча")
+
         # Заполнение поля поиска
         selector_input = "input#txtKeyword"
-        await session.page.wait_for_selector(selector_input, timeout=10000)
+        try:
+            await session.page.wait_for_selector(selector_input, timeout=10000)
+        except Exception:
+            # Если поля нет, возможно нас выкинуло на капчу
+            await session.check_captcha()
+            raise
         await session.page.fill(selector_input, keyword)
         await session.human_delay()
 

@@ -7,6 +7,7 @@ from typing import Optional
 
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 from tender_agents.browser.cookies import accept_cookies
+from tender_agents.browser.exceptions import CaptchaRequiredError
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +44,35 @@ class HumanSession:
         if self.playwright:
             await self.playwright.stop()
 
+    async def check_captcha(self):
+        """Проверка на наличие капчи или блокировки."""
+        content = await self.page.content()
+        # Общие признаки капчи/блокировки
+        captcha_indicators = [
+            "g-recaptcha",
+            "captcha",
+            "robot",
+            "подтвердите, что вы не робот",
+            "блокировка",
+            "IP blocked",
+            "Access Denied",
+        ]
+        for indicator in captcha_indicators:
+            if indicator.lower() in content.lower():
+                logger.warning(f"Обнаружена капча или блокировка (маркер: '{indicator}')")
+                await self.save_screenshot("captcha")
+                raise CaptchaRequiredError("Нужен ручной ввод (капча или блокировка)")
+
     async def goto(self, url: str):
         """Переход по URL с последующим принятием cookie."""
         logger.info(f"Открываю {url}...")
         try:
             await self.page.goto(url, wait_until="networkidle")
+            await self.check_captcha()
             await self.human_delay()
             await accept_cookies(self.page)
+        except CaptchaRequiredError:
+            raise
         except Exception as e:
             logger.error(f"Ошибка при переходе на {url}: {e}")
             await self.save_screenshot("goto_error")
