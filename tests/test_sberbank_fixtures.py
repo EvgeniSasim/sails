@@ -2,7 +2,7 @@ import pytest
 from playwright.sync_api import Page
 from tender_agents.browser.page_context import _EXTRACT_LEAF_LISTINGS_JS, _MAIN_TEXT_JS
 from tender_agents.browser.text_blocks import parse_tender_detail_text
-from tests.fixture_browser import load_fixture_to_page_sync
+from fixture_browser import load_fixture_to_page_sync
 
 def test_leaf_listing_from_fixture(page: Page):
     load_fixture_to_page_sync(page, "sberbank/listing_crm.html")
