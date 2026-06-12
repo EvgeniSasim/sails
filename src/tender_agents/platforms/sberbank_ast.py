@@ -17,6 +17,7 @@ from tender_agents.browser.page_context import (
 )
 from tender_agents.browser.session import HumanSession
 from tender_agents.browser.text_blocks import parse_tender_detail_text
+from tender_agents.extract.llm_fallback import extract_tender_from_text, llm_fallback_enabled
 from tender_agents.models import CollectFilters, ListingItem, SearchContext, TenderRecord
 from tender_agents.platforms.base import PlatformAdapter
 from tender_agents.platforms.registry import registry
@@ -205,6 +206,13 @@ class SberbankAstAdapter(PlatformAdapter):
 
         text = await capture_main_text(session.page)
         fields = parse_tender_detail_text(text)
+
+        if llm_fallback_enabled(filters.llm_fallback):
+            if not fields.get("title") or not fields.get("external_id"):
+                llm_fields = await extract_tender_from_text(text, str(item.url))
+                for key, value in llm_fields.items():
+                    if value and not fields.get(key):
+                        fields[key] = value
 
         external_id = fields.get("external_id")
         if not external_id and item.preview:

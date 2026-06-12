@@ -161,6 +161,9 @@ def collect(
     output: Optional[str] = typer.Option(None, "--output", help="Путь к файлу для сохранения"),
     store: str = typer.Option("both", "--store", help="Тип хранилища: sqlite, jsonl, both"),
     headed: bool = typer.Option(False, "--headed", help="Запустить в видимом режиме"),
+    llm_fallback: bool = typer.Option(
+        False, "--llm-fallback", help="Дополнить парсинг через Yandex GPT при пустых полях"
+    ),
     verbose: bool = typer.Option(False, "-v", "--verbose", help="Подробный лог"),
 ) -> None:
     """Сбор тендеров по заданным параметрам."""
@@ -183,6 +186,7 @@ def collect(
         filters = CollectFilters(
             date_from=datetime.strptime(date_from, "%Y-%m-%d").date() if date_from else None,
             date_to=datetime.strptime(date_to, "%Y-%m-%d").date() if date_to else None,
+            llm_fallback=llm_fallback,
         )
         plan = CollectPlan(
             platform_url=platform_url,
@@ -194,6 +198,11 @@ def collect(
     except (ValueError, ValidationError) as e:
         console.print(f"[red]Ошибка валидации:[/red] {e}")
         raise typer.Exit(code=1)
+
+    if llm_fallback:
+        console.print(
+            "[yellow]LLM fallback включён — медленнее и требует YANDEX_API_KEY.[/yellow]"
+        )
 
     # Summary in Russian
     console.print("[bold green]План сбора сформирован[/bold green]")
@@ -334,6 +343,9 @@ def probe_search(
     max_per_keyword: int = typer.Option(5, "--max-per-keyword", help="Макс. деталей на ключ"),
     fetch_details: bool = typer.Option(False, "--fetch-details", help="Собирать детали"),
     headed: bool = typer.Option(False, "--headed", help="Запустить в видимом режиме"),
+    llm_fallback: bool = typer.Option(
+        False, "--llm-fallback", help="Дополнить парсинг через Yandex GPT при пустых полях"
+    ),
 ) -> None:
     """Smoke-тест поиска: открыть площадку, ввести ключ, вернуть ссылки или детали."""
     from tender_agents.browser.session import HumanSession
@@ -342,61 +354,75 @@ def probe_search(
 
     import tender_agents.platforms  # noqa: F401
 
+    async def _probe_with_session(session):
+        console.print(f"Использую адаптер: [cyan]{adapter.__class__.__name__}[/cyan]")
+        await adapter.open_home(session)
+
+        filters = CollectFilters(llm_fallback=llm_fallback)
+        ctx = await adapter.search(session, keyword, filters)
+
+        items = []
+        async for item in adapter.iter_listing_pages(session, ctx, max_pages=max_pages):
+            items.append(item)
+            if len(items) >= max_per_keyword and not fetch_details:
+                break
+
+        console.print(f"Всего уникальных ссылок найдено: [bold]{len(items)}[/bold]")
+
+        if not fetch_details:
+            for item in items[:max_per_keyword]:
+                console.print(f"  - {item.url} ([dim]{item.title}[/dim])")
+            return
+
+        records = []
+        for i, item in enumerate(items[:max_per_keyword], 1):
+            title_preview = (item.title or "—")[:60]
+            console.print(
+                f"Карточка {i}/{min(len(items), max_per_keyword)}: {title_preview}..."
+            )
+            record = await adapter.open_detail(session, item, keyword, filters)
+            if record:
+                records.append(record)
+
+        if records:
+            table = Table(title=f"Результаты для '{keyword}'")
+            table.add_column("ID", style="cyan")
+            table.add_column("Заголовок", style="green")
+            table.add_column("Заказчик")
+            table.add_column("Цена", justify="right")
+            table.add_column("Дата", justify="right")
+
+            for r in records:
+                table.add_row(
+                    r.external_id or "—",
+                    r.title[:50] + "..." if len(r.title) > 50 else r.title,
+                    r.customer_name[:30] + "..."
+                    if r.customer_name and len(r.customer_name) > 30
+                    else (r.customer_name or "—"),
+                    r.price or "—",
+                    str(r.publish_date) if r.publish_date else "—",
+                )
+            console.print(table)
+        else:
+            console.print(
+                "[yellow]Детали не были собраны (возможно, отфильтрованы по дате).[/yellow]"
+            )
+
     async def _probe():
         adapter = get_adapter(platform_url)
         if not adapter:
             console.print(f"[red]Адаптер для {platform_url} не найден.[/red]")
             raise typer.Exit(code=1)
 
-        async with HumanSession(headed=headed) as session:
-            console.print(f"Использую адаптер: [cyan]{adapter.__class__.__name__}[/cyan]")
-            await adapter.open_home(session)
-
-            filters = CollectFilters()
-            ctx = await adapter.search(session, keyword, filters)
-
-            items = []
-            async for item in adapter.iter_listing_pages(session, ctx, max_pages=max_pages):
-                items.append(item)
-                if len(items) >= max_per_keyword and not fetch_details:
-                    break
-
-            console.print(f"Всего уникальных ссылок найдено: [bold]{len(items)}[/bold]")
-
-            if not fetch_details:
-                for item in items[:max_per_keyword]:
-                    console.print(f"  - {item.url} ([dim]{item.title}[/dim])")
-                return
-
-            records = []
-            for i, item in enumerate(items[:max_per_keyword], 1):
-                title_preview = (item.title or "—")[:60]
-                console.print(
-                    f"Карточка {i}/{min(len(items), max_per_keyword)}: {title_preview}..."
-                )
-                record = await adapter.open_detail(session, item, keyword, filters)
-                if record:
-                    records.append(record)
-
-            if records:
-                table = Table(title=f"Результаты для '{keyword}'")
-                table.add_column("ID", style="cyan")
-                table.add_column("Заголовок", style="green")
-                table.add_column("Заказчик")
-                table.add_column("Цена", justify="right")
-                table.add_column("Дата", justify="right")
-
-                for r in records:
-                    table.add_row(
-                        r.external_id or "—",
-                        r.title[:50] + "..." if len(r.title) > 50 else r.title,
-                        r.customer_name[:30] + "..." if r.customer_name and len(r.customer_name) > 30 else (r.customer_name or "—"),
-                        r.price or "—",
-                        str(r.publish_date) if r.publish_date else "—"
-                    )
-                console.print(table)
-            else:
-                console.print("[yellow]Детали не были собраны (возможно, отфильтрованы по дате).[/yellow]")
+        if getattr(adapter, "needs_browser", True):
+            async with HumanSession(headed=headed) as session:
+                await _probe_with_session(session)
+        else:
+            try:
+                await _probe_with_session(None)
+            finally:
+                if hasattr(adapter, "aclose"):
+                    await adapter.aclose()
 
     try:
         asyncio.run(_probe())

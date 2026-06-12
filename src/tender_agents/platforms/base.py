@@ -8,6 +8,8 @@ class PlatformAdapter(ABC):
     Абстрактный базовый класс для адаптеров торговых площадок.
     """
 
+    needs_browser: bool = True
+
     @abstractmethod
     def matches_url(self, url: str) -> bool:
         """Подходит ли этот адаптер для данного URL."""

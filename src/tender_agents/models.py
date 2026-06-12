@@ -7,6 +7,7 @@ class CollectFilters(BaseModel):
     """Фильтры для сбора тендеров."""
     date_from: Optional[date] = None
     date_to: Optional[date] = None
+    llm_fallback: bool = False
 
 
 class CollectPlan(BaseModel):

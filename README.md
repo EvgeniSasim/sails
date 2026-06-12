@@ -78,8 +78,29 @@ tender-leads export --platform sberbank-ast --output my_export.csv
 ```bash
 # Запуск всех тестов, кроме тех, что требуют живой сети
 pytest -m "not network"
+```
 
-# Запуск тестов, требующих сеть (Сбербанк-АСТ и др.)
+## Вторая площадка: zakupki.gov.ru
+Сбор через httpx (без браузера):
+
+```bash
+pip install -e ".[httpx]"
+tender-leads probe-search --platform-url https://zakupki.gov.ru -k "crm" --max-per-keyword 3
+```
+
+## LLM fallback (опционально)
+Если leaf/текст не дали `title` или `external_id`, можно включить Yandex GPT:
+
+```bash
+export YANDEX_API_KEY=...
+export YANDEX_FOLDER_ID=...
+tender-leads collect --platform-url https://www.sberbank-ast.ru/ -k "crm" --llm-fallback
+```
+
+Флаг медленный и платный — не для каждого лота по умолчанию.
+
+```bash
+# Тесты, требующие сеть
 pytest -m "network"
 ```
 

@@ -62,82 +62,19 @@ async def run_collect(
         return result
 
     try:
-        async with HumanSession(headed=headed) as session:
-            logger.info(f"Начинаю сбор на {plan.platform_url.host}")
-            await adapter.open_home(session)
-
-            for keyword in plan.keywords:
-                logger.info(f"Ищу: {keyword}")
-                result.totals_per_keyword[keyword] = 0
-                stats = KeywordStats()
-                result.keyword_stats[keyword] = stats
-                start_ts = time.time()
-
-                try:
-                    ctx = await adapter.search(session, keyword, plan.filters)
-
-                    async for item in adapter.iter_listing_pages(session, ctx, max_pages=plan.max_pages):
-                        stats.found_links += 1
-                        if stats.saved >= plan.max_per_keyword:
-                            break
-
-                        try:
-                            record = await adapter.open_detail(session, item, keyword, plan.filters)
-                            if record:
-                                if record.title == "Без названия" and not record.external_id:
-                                    main_text = await capture_main_text(session.page)
-                                    os.makedirs("data/debug", exist_ok=True)
-                                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-                                    filepath = f"data/debug/parse-fail-{ts}.txt"
-                                    with open(filepath, "w", encoding="utf-8") as f:
-                                        f.write(main_text)
-                                    logger.warning(f"Предупреждение: не удалось извлечь заголовок и ID. Снимок текста: {filepath}")
-
-                                saved_any = False
-                                for store in stores:
-                                    if isinstance(store, DbStore):
-                                        if await store.write(record):
-                                            saved_any = True
-                                    else:
-                                        if store.write(record):
-                                            saved_any = True
-
-                                if saved_any:
-                                    result.records.append(record)
-                                    stats.saved += 1
-                                    result.totals_per_keyword[keyword] = stats.saved
-                                    logger.info(f"Сохранено лотов: {stats.saved}")
-                                else:
-                                    stats.skipped_duplicate += 1
-                                    result.duplicates_count += 1
-                                    logger.debug(f"Дубликат пропущен: {record.url}")
-                            else:
-                                stats.skipped_filter += 1
-                                result.filtered_count += 1
-
-                            if stats.saved >= plan.max_per_keyword:
-                                break
-                        except Exception as e:
-                            logger.error(f"Ошибка при обработке лота {item.url}: {e}")
-                            await session.save_screenshot("error_detail")
-                            stats.errors += 1
-                            result.errors_count += 1
-
-                except asyncio.CancelledError:
-                    logger.warning(f"Сбор прерван пользователем на ключе '{keyword}'")
-                    raise
-                except Exception as e:
-                    err_msg = str(e).lower()
-                    hint = ""
-                    if "timeout" in err_msg or "err_connection" in err_msg or "net::" in err_msg:
-                        hint = " Для доступа к площадке может потребоваться VPN/прокси в РФ."
-                    logger.error(f"Ошибка при поиске по ключу '{keyword}': {e}{hint}")
-                    await session.save_screenshot("error_search")
-                    stats.errors += 1
-                    result.errors_count += 1
-                finally:
-                    stats.duration_seconds = time.time() - start_ts
-
+        if getattr(adapter, "needs_browser", True):
+            async with HumanSession(headed=headed) as session:
+                logger.info(f"Начинаю сбор на {plan.platform_url.host}")
+                await adapter.open_home(session)
+                await _collect_keywords(adapter, session, plan, result, stores)
+        else:
+            logger.info(f"Начинаю сбор на {plan.platform_url.host} (httpx, без браузера)")
+            await adapter.open_home(None)
+            try:
+                await _collect_keywords(adapter, None, plan, result, stores)
+            finally:
+                if hasattr(adapter, "aclose"):
+                    await adapter.aclose()
     except SiteUnreachableError as e:
         logger.error("%s", e)
         result.errors_count += 1
@@ -155,6 +92,97 @@ async def run_collect(
         save_report(plan, result, output_path)
 
     return result
+
+
+async def _collect_keywords(
+    adapter,
+    session,
+    plan: CollectPlan,
+    result: CollectResult,
+    stores,
+) -> None:
+    for keyword in plan.keywords:
+        logger.info(f"Ищу: {keyword}")
+        result.totals_per_keyword[keyword] = 0
+        stats = KeywordStats()
+        result.keyword_stats[keyword] = stats
+        start_ts = time.time()
+
+        try:
+            ctx = await adapter.search(session, keyword, plan.filters)
+
+            async for item in adapter.iter_listing_pages(session, ctx, max_pages=plan.max_pages):
+                stats.found_links += 1
+                if stats.saved >= plan.max_per_keyword:
+                    break
+
+                try:
+                    record = await adapter.open_detail(session, item, keyword, plan.filters)
+                    if record:
+                        if (
+                            record.title == "Без названия"
+                            and not record.external_id
+                            and session is not None
+                            and session.page is not None
+                        ):
+                            main_text = await capture_main_text(session.page)
+                            os.makedirs("data/debug", exist_ok=True)
+                            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            filepath = f"data/debug/parse-fail-{ts}.txt"
+                            with open(filepath, "w", encoding="utf-8") as f:
+                                f.write(main_text)
+                            logger.warning(
+                                "Предупреждение: не удалось извлечь заголовок и ID. "
+                                "Снимок текста: %s",
+                                filepath,
+                            )
+
+                        saved_any = False
+                        for store in stores:
+                            if isinstance(store, DbStore):
+                                if await store.write(record):
+                                    saved_any = True
+                            else:
+                                if store.write(record):
+                                    saved_any = True
+
+                        if saved_any:
+                            result.records.append(record)
+                            stats.saved += 1
+                            result.totals_per_keyword[keyword] = stats.saved
+                            logger.info(f"Сохранено лотов: {stats.saved}")
+                        else:
+                            stats.skipped_duplicate += 1
+                            result.duplicates_count += 1
+                            logger.debug(f"Дубликат пропущен: {record.url}")
+                    else:
+                        stats.skipped_filter += 1
+                        result.filtered_count += 1
+
+                    if stats.saved >= plan.max_per_keyword:
+                        break
+                except Exception as e:
+                    logger.error(f"Ошибка при обработке лота {item.url}: {e}")
+                    if session is not None:
+                        await session.save_screenshot("error_detail")
+                    stats.errors += 1
+                    result.errors_count += 1
+
+        except asyncio.CancelledError:
+            logger.warning(f"Сбор прерван пользователем на ключе '{keyword}'")
+            raise
+        except Exception as e:
+            err_msg = str(e).lower()
+            hint = ""
+            if "timeout" in err_msg or "err_connection" in err_msg or "net::" in err_msg:
+                hint = " Для доступа к площадке может потребоваться VPN/прокси в РФ."
+            logger.error(f"Ошибка при поиске по ключу '{keyword}': {e}{hint}")
+            if session is not None:
+                await session.save_screenshot("error_search")
+            stats.errors += 1
+            result.errors_count += 1
+        finally:
+            stats.duration_seconds = time.time() - start_ts
 
 
 def save_report(plan: CollectPlan, result: CollectResult, output_path: Optional[str] = None):
